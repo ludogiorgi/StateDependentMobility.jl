@@ -1,0 +1,213 @@
+# julia --project=. --threads 36 fit_dm.jl fit_dm.toml
+# nohup julia --project=. --threads 36 fit_dm.jl fit_dm.toml > fit_dm.log 2>&1 &
+
+[run]
+# Short human-readable label written into the run metadata.
+label = "alpha3_full_pipeline"
+# Free-form note explaining the purpose of this configuration.
+notes = "Default configuration for the alpha=3 shared dataset branch in Data/."
+
+[data]
+# Shared observation trajectory file used to estimate correlations and fit the mobility model.
+input_hdf5 = "Data/alpha3/sim_alpha3.h5"
+# Pretrained stationary score model s(x) used throughout the mobility fit and optional forward validation.
+plain_score_bson = "Data/alpha3/score_alpha3.bson"
+# Pretrained joint/conditional score model used to estimate A-data and related operators.
+joint_score_bson = "Data/alpha3/joint_score_alpha3.bson"
+# Fraction of the observed trajectories discarded as burn-in before any fitting or validation statistics are computed.
+burnin_fraction = 0.1
+# Minimum physical lag included when building lagged-pair statistics.
+tau_min = 0.025
+# If true, recompute Phi from the observed data even if a saved estimate is already available.
+force_recompute_phi = false
+
+[evaluation]
+# Use every lag_stride-th available lag when constructing the fitting and diagnostic lag grid.
+lag_stride = 5
+# If true, evaluate all available observed lagged pairs instead of subsampling them for diagnostics.
+use_all_observed_pairs = true
+# Baseline smoothing strength used when spline-differentiating Cphi(t) to obtain Cdot estimates.
+cphi_spline_smoothing = 1.0
+# Relative smoothing candidates scanned around the baseline smoothing when selecting a stable Cphi spline.
+cphi_smoothing_rel_grid = [0.0, 1.0e-7, 1.0e-6, 1.0e-5, 1.0e-4, 1.0e-3, 1.0e-2, 1.0e-1, 1.0, 10.0]
+# Maximum tolerated relative RMSE when choosing the smoothed Cphi representation.
+cphi_smoothing_rmse_tolerance = 0.02
+# If true, use all available pairs when estimating score-projected observables for diagnostics.
+use_all_sphi_pairs = true
+# If true, use all available pairs when estimating A_{m,n}(t) diagnostics.
+use_all_a_pairs = true
+# Number of lagged pairs sampled per lag when use_all_a_pairs = false.
+a_pairs_per_tau = 200000
+# Batch size for evaluating the stationary score model on observed states.
+score_batch_size = 8192
+# Batch size for evaluating the joint score model on lagged observed pairs.
+joint_batch_size = 8192
+
+[training_observables]
+# Available non-redundant polynomial observables in the built-in library
+# (all scalar monomials x^p y^q with total degree 1 through 6, excluding the
+# constant observable, which is redundant here because its gradient is zero):
+#   1:  x
+#   2:  y
+#   3:  x^2
+#   4:  xy
+#   5:  y^2
+#   6:  x^3
+#   7:  x^2y
+#   8:  xy^2
+#   9:  y^3
+#   10: x^4
+#   11: x^3y
+#   12: x^2y^2
+#   13: xy^3
+#   14: y^4
+#   15: x^5
+#   16: x^4y
+#   17: x^3y^2
+#   18: x^2y^3
+#   19: xy^4
+#   20: y^5
+#   21: x^6
+#   22: x^5y
+#   23: x^4y^2
+#   24: x^3y^3
+#   25: x^2y^4
+#   26: xy^5
+#   27: y^6
+#
+# Choose the ordered training channels explicitly as (m,n) label pairs.
+# The first label m is the observable evaluated at time t.
+# The second label n is the observable evaluated/projected at time 0 inside
+# Gamma, Cdot, and A. Order matters: (m,n) and (n,m) are different channels.
+train_pairs_labels = [
+    ["x^2", "x"],
+["x^2", "y"],
+["xy", "x"],
+["xy", "y"],
+["y^2", "x"],
+["y^2", "y"],
+["x^2y", "x"],
+["xy^2", "x"],
+["x^2y", "y"],
+["xy^2", "y"]
+]
+# Optional positive weights, one for each ordered pair listed above.
+train_pair_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+
+[mobility_nn]
+# Number of training lagged pairs drawn per lag to build the mobility NN cache.
+pairs_per_tau = 8192
+# Number of lag values optimized together in one NN training batch.
+tau_batch_size = 8
+# Number of anchor states used to regularize the learned mobility around Phi.
+anchor_points = 8192
+# Widths of the hidden layers in the mobility neural network.
+widths = [128, 128]
+# Number of optimization epochs for the mobility NN.
+epochs = 250
+# Evaluate diagnostics and checkpoint selection every eval_every epochs.
+eval_every = 10
+# Adam learning rate for mobility NN training.
+learning_rate = 3.0e-4
+# Extra weight given to short lags in the training loss; larger values emphasize early-time information more strongly.
+lag_weight_power = 0.5
+# Weight of the penalty enforcing a small mean correction <Delta M> over anchor states.
+mean_penalty_weight = 1.0e-1
+# Weight of the RMS penalty shrinking Delta M(x) toward zero over anchor states.
+anchor_rms_penalty_weight = 0.0
+# L2 weight decay applied to the NN parameters.
+weight_decay = 1.0e-6
+# Small diagonal PSD stabilization added when turning NN outputs into mobility matrices.
+psd_jitter = 1.0e-5
+# Minimum scale used when normalizing channels and penalties to avoid division by very small numbers.
+scale_floor = 1.0e-4
+
+[mobility]
+# Number of x-grid points used for the saved mobility heatmaps and support-grid evaluations.
+grid_nx = 160
+# Number of y-grid points used for the saved mobility heatmaps and support-grid evaluations.
+grid_ny = 160
+# Ridge regularization used when reconstructing gridded mobility fields from noisy estimates.
+ridge = 1.0e-6
+# Fractional padding added around the observed state support when building evaluation grids.
+grid_pad_fraction = 0.05
+
+[figure]
+# Per-panel width in pixels used for the multi-panel A and Cdot figures.
+width = 2200
+# Per-panel height in pixels used for the multi-panel A and Cdot figures.
+height = 1800
+
+[forward_validation]
+# If true, after fitting the mobility model also run forward Langevin validation for full M(x) and Phi-only closures.
+enabled = false
+# Burn-in fraction used when loading the observed trajectories for forward-validation comparisons.
+burnin_fraction = 0.1
+
+[forward_validation.simulation]
+# Euler-Maruyama time step used in the reduced Langevin simulations.
+dt = 0.005
+# Save every save_stride simulation steps to the stored forward-validation trajectories.
+save_stride = 1
+# Total physical simulation time of each reduced Langevin trajectory.
+total_time = 32.0
+# Initial physical time discarded before saving forward-validation trajectories.
+burnin_time = 8.0
+# Number of reduced Langevin trajectories integrated for each closure.
+ntrajectories = 512
+# Random seed for the forward-validation simulations.
+seed = 20260416
+# If true, reuse the same random noise streams for the full-M and Phi-only simulations to reduce Monte Carlo variance.
+use_common_random_numbers = true
+# Batch size used when evaluating learned score and mobility models during simulation/diagnostics.
+eval_batch_size = 2048
+# If true, clamp model evaluations to the observed support before querying score or mobility networks.
+clamp_eval_to_support = true
+# If true, hard-clamp the simulated state itself to the support box after each update step.
+hard_clamp_state = false
+# Extra padding around the observed support box used to define the forward-validation state domain.
+support_pad_fraction = 0.10
+# PSD stabilization added when evaluating the learned mobility during simulation.
+mobility_psd_jitter = 1.0e-5
+# Minimum allowed diffusion eigenvalue during reduced Langevin simulation.
+diffusion_floor = 1.0e-5
+# Quantile of sampled diffusion eigenvalues used to define a soft upper cap for simulation stability.
+diffusion_cap_quantile = 0.995
+# Multiplier applied to that diffusion quantile to obtain the final diffusion cap.
+diffusion_cap_multiplier = 1.25
+
+[forward_validation.analysis]
+# Number of bins used in 1D and 2D stationary PDF histograms.
+pdf_bins = 160
+# Maximum number of simulated samples retained when estimating stationary PDFs.
+pdf_max_samples = 300000
+# Subsampling stride used before computing ACF and cross-correlation curves.
+correlation_stride = 4
+# Maximum correlation lag time displayed and scored in forward validation.
+correlation_max_time = 8.0
+# Threshold used to estimate decorrelation times from correlation curves.
+correlation_threshold = 0.05
+# If true, evaluate Cphi on the same lag grid stored in the mobility artifact instead of rebuilding a new one.
+use_artifact_lags = true
+# Maximum lag time used for forward-validation Cphi comparisons.
+cphi_max_time = 1.5
+# Subsampling stride on the Cphi lag grid.
+cphi_stride = 1
+# Maximum number of samples retained for auxiliary diagnostics derived from the simulated trajectories.
+auxiliary_max_samples = 150000
+
+[forward_validation.divergence]
+# Method used to approximate div M(x) during forward Langevin simulation.
+method = "forwarddiff_grid"
+# Number of x-grid points used by the grid-based divergence estimator.
+grid_nx = 160
+# Number of y-grid points used by the grid-based divergence estimator.
+grid_ny = 160
+# Finite-difference step used in the divergence approximation.
+finite_difference_eps = 1.0e-3
+
+[forward_validation.figure]
+# Width in pixels of the forward-validation figures.
+width = 2400
+# Height in pixels of the forward-validation figures.
+height = 2100

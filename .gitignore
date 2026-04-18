@@ -1,0 +1,21 @@
+# Ignore everything by default.
+*
+
+# Keep directory traversal only where needed for Git to evaluate patterns.
+!/
+
+# Never commit generated data and run outputs.
+Data/
+output/
+runs/
+
+# Keep only the minimal top-level repository files.
+!.gitignore
+!README.md
+!*.jl
+!*.toml
+
+# Keep source code under src/.
+!src/
+!src/**/*.jl
+!src/**/*.toml

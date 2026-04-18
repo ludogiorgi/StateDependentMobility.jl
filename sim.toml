@@ -1,0 +1,74 @@
+# julia --project=. --threads 36 sim.jl sim.toml
+# nohup julia --project=. --threads 36 sim.jl sim.toml > sim.log 2>&1 &
+
+[simulation]
+# Nonequilibrium rotation rate in the drift.
+omega = 1.1
+
+# Constant affine-noise coefficient matrix B0.
+B0 = [[0.60, 0.10], [0.08, 0.55]]
+
+# x-dependent affine-noise coefficient matrix B1.
+B1 = [[0.12, 0.04], [0.05, -0.02]]
+
+# y-dependent affine-noise coefficient matrix B2.
+B2 = [[-0.03, 0.07], [0.06, 0.10]]
+
+# Initial time of the integration window.
+t0 = 0.0
+
+# Final time of the integration window.
+t1 = 3000.0
+
+# Euler-Maruyama integration step.
+dt = 0.001
+
+# Saved temporal resolution for the output trajectories.
+save_dt = 0.01
+
+# Number of ensemble members, one per Julia thread.
+ntrajectories = 36
+
+# Required Julia thread count for this script.
+requested_threads = 36
+
+# Base random seed used to initialize one RNG per trajectory.
+seed = 20260406
+
+# Initial x coordinate. The deterministic fixed point is (0,0).
+x0 = 0.0
+
+# Initial y coordinate. The deterministic fixed point is (0,0).
+y0 = 0.0
+
+[statistics]
+# Fraction of the saved trajectory discarded before estimating PDFs and correlations.
+burnin_fraction = 0.1
+
+# Number of bins used for the univariate stationary histograms.
+histogram_bins = 120
+
+# Saved-sample stride used for correlation estimation. With save_dt = 0.01,
+# the effective correlation sampling interval is save_dt * correlation_stride.
+correlation_stride = 50
+
+# Threshold used to define the decorrelation time tD. The code picks the first lag
+# after which both monovariate ACF magnitudes remain below this value.
+decorrelation_threshold = 0.05
+
+# Maximum lag horizon inspected while estimating tD and plotting the correlations.
+max_decorrelation_time = 200.0
+
+[figure]
+# Output PNG width in pixels.
+width = 1800
+
+# Output PNG height in pixels.
+height = 1100
+
+[output]
+# HDF5 file written by the script.
+hdf5_file = "Data/baseline/sim.h5"
+
+# PNG summary figure written by the script.
+figure_png = "Data/baseline/figures/sim.png"
