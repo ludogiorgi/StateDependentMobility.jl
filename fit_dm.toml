@@ -80,27 +80,35 @@ joint_batch_size = 8192
 # The second label n is the observable evaluated/projected at time 0 inside
 # Gamma, Cdot, and A. Order matters: (m,n) and (n,m) are different channels.
 train_pairs_labels = [
-    ["x^2", "x"],
+["x", "x"],
+["x", "y"],
+["y", "x"],
+["y", "y"],
+["x^2", "x"],
 ["x^2", "y"],
 ["xy", "x"],
 ["xy", "y"],
 ["y^2", "x"],
 ["y^2", "y"],
+["x^3", "x"],
+["x^3", "y"],
 ["x^2y", "x"],
-["xy^2", "x"],
 ["x^2y", "y"],
-["xy^2", "y"]
+["xy^2", "x"],
+["xy^2", "y"],
+["y^3", "x"],
+["y^3", "y"]
 ]
 # Optional positive weights, one for each ordered pair listed above.
-train_pair_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+train_pair_weights = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
 
 [mobility_nn]
 # Number of training lagged pairs drawn per lag to build the mobility NN cache.
-pairs_per_tau = 8192
+pairs_per_tau = 32768
 # Number of lag values optimized together in one NN training batch.
-tau_batch_size = 8
+tau_batch_size = 4
 # Number of anchor states used to regularize the learned mobility around Phi.
-anchor_points = 8192
+anchor_points = 32768
 # Widths of the hidden layers in the mobility neural network.
 widths = [128, 128]
 # Number of optimization epochs for the mobility NN.
@@ -140,7 +148,7 @@ height = 1800
 
 [forward_validation]
 # If true, after fitting the mobility model also run forward Langevin validation for full M(x) and Phi-only closures.
-enabled = false
+enabled = true
 # Burn-in fraction used when loading the observed trajectories for forward-validation comparisons.
 burnin_fraction = 0.1
 

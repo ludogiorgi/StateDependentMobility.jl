@@ -25,7 +25,7 @@ function ensure_packages(packages::Vector{String})
 end
 
 ENV["GKSwstype"] = get(ENV, "GKSwstype", "100")
-ensure_packages(["Flux", "BSON", "HDF5", "Plots", "CUDA", "Dierckx"])
+ensure_packages(["Flux", "BSON", "HDF5", "GLMakie", "CUDA", "Dierckx", "LaTeXStrings"])
 
 using BSON
 using CUDA
@@ -33,15 +33,13 @@ using Dierckx
 using Flux
 using HDF5
 using LinearAlgebra
-using Plots
 using Printf
 using Random
 using SparseArrays
 using Statistics
 using TOML
 
-gr()
-default(fontfamily="DejaVu Sans", lw=2, dpi=180)
+include(joinpath(@__DIR__, "src", "figure_style.jl"))
 
 const DEFAULT_PARAM_FILE = joinpath(@__DIR__, "fit_dm.toml")
 const DEFAULT_TRAIN_OBS_INDICES = (3, 4, 5)
@@ -49,6 +47,7 @@ const DEFAULT_TRAIN_COORD_INDICES = (1, 2)
 const TRAINING_TARGET_SOURCE = "A_data = Gamma - Cdot_data"
 const MAX_OBSERVABLE_TOTAL_DEGREE = 6
 const MAX_FIT_PANEL_COLUMNS = 4
+const MAX_TRAINING_CHANNEL_PANEL_COLUMNS = 3
 
 struct FitDMParams
     input_hdf5::String
@@ -2016,67 +2015,144 @@ function pair_channel_label(prefix::AbstractString, pair::Tuple{Int, Int}, label
     return prefix * "_" * labels[pair[1]] * "," * labels[pair[2]]
 end
 
-function panel_grid_dims(npanels::Int; max_cols::Int=MAX_FIT_PANEL_COLUMNS)
-    require_condition(npanels >= 1, "Need at least one panel to plot.")
-    require_condition(max_cols >= 1, "max_cols must be at least 1.")
-    ncols = min(max_cols, ceil(Int, sqrt(npanels)))
-    nrows = cld(npanels, ncols)
-    return nrows, ncols
+function pair_channel_latex(prefix::AbstractString, pair::Tuple{Int, Int}, labels::Vector{String}; with_tau::Bool=false)
+    head = prefix == "Cdot" ? "\\dot{C}" : prefix
+    return latex_channel_label(head, labels[pair[1]], labels[pair[2]];
+        argument=with_tau ? "\\tau" : nothing)
 end
 
-function a_panel(taus::Vector{Float64}, y_data::Vector{Float64}, y_ref::Vector{Float64}, y_nn::Vector{Float64},
-        title::String, rmse_data_nn::Float64, rmse_true_nn::Float64; show_legend::Bool)
-    p = plot(taus, y_data; xlabel="tau", ylabel="value", label="from data A", color=:black,
-        legend=show_legend ? :topright : false,
-        title=@sprintf("%s\nRMSE data/NN = %.3e | true/NN = %.3e", title, rmse_data_nn, rmse_true_nn))
-    plot!(p, taus, y_ref; label="from true ΔM", color=:darkorange, linestyle=:dash)
-    plot!(p, taus, y_nn; label="from NN ΔM", color=:royalblue3, linestyle=:dashdot)
-    return p
+function training_channel_tick_latex(label::AbstractString)
+    parts = split(String(label), "_"; limit=2)
+    length(parts) == 2 || return latexstring(replace(String(label), "_" => "\\_"))
+    head = parts[1] == "Cdot" ? "\\dot{C}" : parts[1]
+    pair_parts = split(parts[2], ","; limit=2)
+    length(pair_parts) == 2 || return latexstring(replace(String(label), "_" => "\\_"))
+    return latex_channel_label(head, strip(pair_parts[1]), strip(pair_parts[2]))
 end
 
-function cdot_panel(taus::Vector{Float64}, y_data::Vector{Float64}, y_ref::Vector{Float64}, y_nn::Vector{Float64},
-        title::String, rmse_data_true::Float64, rmse_true_nn::Float64; show_legend::Bool)
-    p = plot(taus, y_data; xlabel="tau", ylabel="value", label="from data", color=:black,
-        legend=show_legend ? :topright : false,
-        title=@sprintf("%s\nRMSE data/true = %.3e | true/NN = %.3e", title, rmse_data_true, rmse_true_nn))
-    plot!(p, taus, y_ref; label="from true M", color=:darkorange, linestyle=:dash)
-    plot!(p, taus, y_nn; label="from NN M", color=:royalblue3, linestyle=:dashdot)
-    return p
+training_channel_tick_labels(channel_labels::Vector{String}) = [training_channel_tick_latex(label) for label in channel_labels]
+
+function mobility_component_latex(name::AbstractString, variant::Symbol)
+    suffix = variant == :reference ? "\\mathrm{ref}" : "\\mathrm{NN}"
+    return latexstring("M_{" * String(name) * "}^{" * suffix * "}")
+end
+
+# `panel_grid_dims`, `panel_rc`, `centered_panel_rc`, `apply_publication_grid!`,
+# and `publication_panel_figure_size` come from src/figure_style.jl.
+
+function a_panel!(parent, taus::Vector{Float64}, y_data::Vector{Float64}, y_ref::Vector{Float64}, y_nn::Vector{Float64},
+        title, rmse_data_nn::Float64, rmse_true_nn::Float64;
+        show_legend::Bool,
+        show_metrics::Bool=true,
+        xlabel="τ",
+        ylabel="value",
+        data_label="data  A",
+        ref_label="true ΔM",
+        nn_label="NN ΔM")
+    axis_title = show_metrics ? @sprintf("%s\nRMSE data/NN = %.3e    |    true/NN = %.3e",
+        String(title), rmse_data_nn, rmse_true_nn) : title
+    ax = Axis(parent; xlabel=xlabel, ylabel=ylabel, title=axis_title)
+    hlines!(ax, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+    lines!(ax, taus, y_data; color=STYLE_REFERENCE, label=data_label)
+    lines!(ax, taus, y_ref;  color=STYLE_HIGHLIGHT, linestyle=:dash, label=ref_label)
+    lines!(ax, taus, y_nn;   color=STYLE_PRIMARY,   linestyle=:dashdot, label=nn_label)
+    show_legend && axislegend(ax; position=:rt)
+    return ax
+end
+
+function cdot_panel!(parent, taus::Vector{Float64}, y_data::Vector{Float64}, y_ref::Vector{Float64}, y_nn::Vector{Float64},
+        title, rmse_data_true::Float64, rmse_true_nn::Float64;
+        show_legend::Bool,
+        show_metrics::Bool=true,
+        xlabel="τ",
+        ylabel="value",
+        data_label="data",
+        ref_label="true M",
+        nn_label="NN M")
+    axis_title = show_metrics ? @sprintf("%s\nRMSE data/true = %.3e    |    true/NN = %.3e",
+        String(title), rmse_data_true, rmse_true_nn) : title
+    ax = Axis(parent; xlabel=xlabel, ylabel=ylabel, title=axis_title)
+    hlines!(ax, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+    lines!(ax, taus, y_data; color=STYLE_REFERENCE, label=data_label)
+    lines!(ax, taus, y_ref;  color=STYLE_HIGHLIGHT, linestyle=:dash, label=ref_label)
+    lines!(ax, taus, y_nn;   color=STYLE_PRIMARY,   linestyle=:dashdot, label=nn_label)
+    show_legend && axislegend(ax; position=:rt)
+    return ax
 end
 
 function create_a_figure(taus::Vector{Float64}, labels::Vector{String}, a_data::Array{Float64, 3}, a_ref::Array{Float64, 3}, a_nn::Array{Float64, 3},
         rmse_data_nn::Matrix{Float64}, rmse_true_nn::Matrix{Float64}, train_pairs::Vector{Tuple{Int, Int}},
-        width::Int, height::Int, output_path::AbstractString)
-    plots = Any[]
-    for (pair_pos, pair) in enumerate(train_pairs)
-        m, n = pair
-        push!(plots, a_panel(taus, vec(a_data[:, m, n]), vec(a_ref[:, m, n]), vec(a_nn[:, m, n]),
-            pair_channel_label("A", pair, labels), rmse_data_nn[m, n], rmse_true_nn[m, n];
-            show_legend=pair_pos == 1))
+        width::Int, height::Int, output_path::AbstractString;
+        show_global_title::Bool=true,
+        show_metrics::Bool=true,
+        use_latex::Bool=false)
+    nrows, ncols = panel_grid_dims(length(train_pairs); max_cols=MAX_TRAINING_CHANNEL_PANEL_COLUMNS)
+    fw, fh = publication_panel_figure_size(nrows, ncols;
+        base_w=width, base_h=height, panel_w=1100, panel_h=640,
+        min_w=1900, min_h=1400, max_w=5200, max_h=4600)
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, "Training channels  A_{m,n}(τ)")
+        x_label = use_latex ? latexstring("\\tau") : "τ"
+        y_label = use_latex ? latexstring("A(\\tau)") : "value"
+        data_label = use_latex ? latexstring("A_{\\mathrm{data}}") : "data  A"
+        ref_label = use_latex ? latexstring("A_{\\mathrm{ref}}") : "true ΔM"
+        nn_label = use_latex ? latexstring("A_{\\mathrm{NN}}") : "NN ΔM"
+        for (pair_pos, pair) in enumerate(train_pairs)
+            m, n = pair
+            r, c = centered_panel_rc(pair_pos, length(train_pairs), ncols)
+            panel_title = use_latex ? pair_channel_latex("A", pair, labels; with_tau=true) : pair_channel_label("A", pair, labels)
+            a_panel!(fig[r, c], taus, vec(a_data[:, m, n]), vec(a_ref[:, m, n]), vec(a_nn[:, m, n]),
+                panel_title, rmse_data_nn[m, n], rmse_true_nn[m, n];
+                show_legend=pair_pos == 1,
+                show_metrics=show_metrics,
+                xlabel=x_label,
+                ylabel=y_label,
+                data_label=data_label,
+                ref_label=ref_label,
+                nn_label=nn_label)
+        end
+        apply_publication_grid!(fig.layout, nrows, ncols; row_gap=34, col_gap=34)
+        save_figure(output_path, fig)
     end
-    nrows, ncols = panel_grid_dims(length(train_pairs))
-    fig = plot(plots...; layout=(nrows, ncols),
-        size=(width * ncols, height * nrows),
-        margin=7Plots.mm)
-    savefig(fig, output_path)
     return nothing
 end
 
 function create_cdot_figure(taus::Vector{Float64}, labels::Vector{String}, cdot_data::Array{Float64, 3}, cdot_ref::Array{Float64, 3}, cdot_nn::Array{Float64, 3},
         rmse_data_true::Matrix{Float64}, rmse_true_nn::Matrix{Float64}, train_pairs::Vector{Tuple{Int, Int}},
-        width::Int, height::Int, output_path::AbstractString)
-    plots = Any[]
-    for (pair_pos, pair) in enumerate(train_pairs)
-        m, n = pair
-        push!(plots, cdot_panel(taus, vec(cdot_data[:, m, n]), vec(cdot_ref[:, m, n]), vec(cdot_nn[:, m, n]),
-            pair_channel_label("Cdot", pair, labels), rmse_data_true[m, n], rmse_true_nn[m, n];
-            show_legend=pair_pos == 1))
+        width::Int, height::Int, output_path::AbstractString;
+        show_global_title::Bool=true,
+        show_metrics::Bool=true,
+        use_latex::Bool=false)
+    nrows, ncols = panel_grid_dims(length(train_pairs); max_cols=MAX_TRAINING_CHANNEL_PANEL_COLUMNS)
+    fw, fh = publication_panel_figure_size(nrows, ncols;
+        base_w=width, base_h=height, panel_w=1100, panel_h=640,
+        min_w=1900, min_h=1400, max_w=5200, max_h=4600)
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, "Training channels  Ċ_{m,n}(τ)")
+        x_label = use_latex ? latexstring("\\tau") : "τ"
+        y_label = use_latex ? latexstring("\\dot{C}(\\tau)") : "value"
+        data_label = use_latex ? latexstring("\\dot{C}_{\\mathrm{data}}") : "data"
+        ref_label = use_latex ? latexstring("M_{\\mathrm{ref}}") : "true M"
+        nn_label = use_latex ? latexstring("M_{\\mathrm{NN}}") : "NN M"
+        for (pair_pos, pair) in enumerate(train_pairs)
+            m, n = pair
+            r, c = centered_panel_rc(pair_pos, length(train_pairs), ncols)
+            panel_title = use_latex ? pair_channel_latex("Cdot", pair, labels; with_tau=true) : pair_channel_label("Cdot", pair, labels)
+            cdot_panel!(fig[r, c], taus, vec(cdot_data[:, m, n]), vec(cdot_ref[:, m, n]), vec(cdot_nn[:, m, n]),
+                panel_title, rmse_data_true[m, n], rmse_true_nn[m, n];
+                show_legend=pair_pos == 1,
+                show_metrics=show_metrics,
+                xlabel=x_label,
+                ylabel=y_label,
+                data_label=data_label,
+                ref_label=ref_label,
+                nn_label=nn_label)
+        end
+        apply_publication_grid!(fig.layout, nrows, ncols; row_gap=34, col_gap=34)
+        save_figure(output_path, fig)
     end
-    nrows, ncols = panel_grid_dims(length(train_pairs))
-    fig = plot(plots...; layout=(nrows, ncols),
-        size=(width * ncols, height * nrows),
-        margin=7Plots.mm)
-    savefig(fig, output_path)
     return nothing
 end
 
@@ -2112,82 +2188,156 @@ function mobility_predicted_matrices(model, field::MobilityField, μ::Vector{Flo
     return [reshape(Float64.(pred[k, :]), nx, ny) for k in 1:4]
 end
 
-function mobility_heatmap_panel(field::MobilityField, values::Matrix{Float64}, title::String; clims=nothing)
-    kwargs = Dict{Symbol, Any}(
-        :xlabel => "x",
-        :ylabel => "y",
-        :aspect_ratio => :equal,
-        :colorbar => true,
-        :title => title,
-        :color => :balance,
-    )
-    if clims !== nothing
-        kwargs[:clims] = clims
-    end
-    return heatmap(field.xgrid, field.ygrid, values'; kwargs...)
+function mobility_heatmap_panel!(parent, field::MobilityField, values::Matrix{Float64}, title;
+        clims=nothing, xlabel="x", ylabel="y")
+    gl = GridLayout(parent)
+    ax = Axis(gl[1, 1]; xlabel=xlabel, ylabel=ylabel, title=title,
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    crange = clims === nothing ? Makie.automatic : clims
+    hm = heatmap!(ax, field.xgrid, field.ygrid, values;
+        colormap=STYLE_DIVERGING, colorrange=crange, nan_color=:transparent)
+    Colorbar(gl[1, 2], hm)
+    return gl
 end
 
 function create_mobility_heatmap_figure(field::MobilityField, ref_mats::Vector{Matrix{Float64}}, nn_mats::Vector{Matrix{Float64}},
-        support_mask::BitMatrix, delta_component_rmse::Vector{Float64}, output_path::AbstractString)
+        support_mask::BitMatrix, delta_component_rmse::Vector{Float64}, output_path::AbstractString;
+        show_global_title::Bool=true,
+        show_metrics::Bool=true,
+        use_latex::Bool=false)
     names = ["11", "12", "21", "22"]
-    panels = Any[]
-    for k in 1:4
-        masked_ref = copy(ref_mats[k])
-        masked_nn = copy(nn_mats[k])
-        masked_ref[.!support_mask] .= NaN
-        masked_nn[.!support_mask] .= NaN
-        component_values = vcat(vec(ref_mats[k][support_mask]), vec(nn_mats[k][support_mask]))
-        component_clim = maximum(abs, component_values)
-        push!(panels, mobility_heatmap_panel(field, masked_ref, "True M" * names[k]; clims=(-component_clim, component_clim)))
-        push!(panels, mobility_heatmap_panel(field, masked_nn, @sprintf("NN M%s | ΔM RMSE %.3e", names[k], delta_component_rmse[k]);
-            clims=(-component_clim, component_clim)))
+    fw, fh = publication_panel_figure_size(2, 4;
+        base_w=2400, base_h=1200, panel_w=860, panel_h=560,
+        min_w=3000, min_h=1400, max_w=4800, max_h=2800)
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, "Learned mobility  M(x)  vs reference")
+        x_label = use_latex ? latexstring("x") : "x"
+        y_label = use_latex ? latexstring("y") : "y"
+        for k in 1:4
+            masked_ref = copy(ref_mats[k])
+            masked_nn = copy(nn_mats[k])
+            masked_ref[.!support_mask] .= NaN
+            masked_nn[.!support_mask] .= NaN
+            component_values = vcat(vec(ref_mats[k][support_mask]), vec(nn_mats[k][support_mask]))
+            component_clim = maximum(abs, component_values)
+            crange = (-component_clim, component_clim)
+            ref_title = use_latex ? mobility_component_latex(names[k], :reference) : "True  M" * names[k]
+            nn_title = if show_metrics
+                @sprintf("NN  M%s    |    ΔM RMSE = %.3e", names[k], delta_component_rmse[k])
+            elseif use_latex
+                mobility_component_latex(names[k], :nn)
+            else
+                "NN  M" * names[k]
+            end
+            mobility_heatmap_panel!(fig[1, k], field, masked_ref, ref_title;
+                clims=crange, xlabel=x_label, ylabel=y_label)
+            mobility_heatmap_panel!(fig[2, k], field, masked_nn, nn_title;
+                clims=crange, xlabel=x_label, ylabel=y_label)
+        end
+        apply_publication_grid!(fig.layout, 2, 4; row_gap=24, col_gap=20)
+        save_figure(output_path, fig)
     end
-    fig = plot(panels...; layout=(2, 4), size=(4800, 2200), margin=6Plots.mm)
-    savefig(fig, output_path)
     return nothing
 end
 
-function text_panel(lines::Vector{String})
-    p = plot(; axis=nothing, framestyle=:none, xlim=(0, 1), ylim=(0, 1))
-    y = 0.96
-    for line in lines
-        annotate!(p, 0.02, y, text(line, 9, :left, :top, "DejaVu Sans"))
-        y -= 0.075
-    end
-    return p
-end
-
-function channel_bar_panel(values::Vector{Float64}, labels::Vector{String}, title::String, ylabel::String; yscale=:identity)
-    return bar(1:length(labels), values; title=title, ylabel=ylabel, xlabel="channel",
-        legend=false, color=:royalblue3, xticks=(1:length(labels), labels), xrotation=45, yscale=yscale)
+function channel_bar_panel!(parent, values::Vector{Float64}, labels, title, ylabel;
+        yscale=identity, xlabel="channel")
+    ax = Axis(parent; title=title, ylabel=ylabel, xlabel=xlabel,
+        xticks=(1:length(labels), labels),
+        xticklabelrotation=π/4,
+        yscale=yscale)
+    barplot!(ax, 1:length(labels), values; color=STYLE_PRIMARY, gap=0.18)
+    return ax
 end
 
 function create_training_diagnostics_figure(history::MobilityNNHistory, channel_labels::Vector{String},
         rmse_phys::Matrix{Float64}, rmse_norm::Matrix{Float64}, target_scale::Matrix{Float64}, final_lines::Vector{String},
-        output_path::AbstractString, width::Int, height::Int)
-    loss_plot = plot(history.epochs, history.train_loss; xlabel="epoch", ylabel="loss", label="normalized loss",
-        color=:black, title="Training Loss")
-    rmse_plot = plot(history.epochs, history.physical_rmse; xlabel="epoch", ylabel="RMSE", label="physical",
-        color=:royalblue3, title="Training RMSE")
-    plot!(rmse_plot, history.epochs, history.normalized_rmse; label="normalized", color=:darkorange)
-    mean_plot = plot(history.epochs, history.mean_delta11; xlabel="epoch", ylabel="<ΔM>", label="<ΔM11>",
-        color=:black, title="Mean ΔM Entries")
-    plot!(mean_plot, history.epochs, history.mean_delta12; label="<ΔM12>", color=:royalblue3)
-    plot!(mean_plot, history.epochs, history.mean_delta21; label="<ΔM21>", color=:darkorange)
-    plot!(mean_plot, history.epochs, history.mean_delta22; label="<ΔM22>", color=:seagreen4)
-    hline!(mean_plot, [0.0]; color=:gray70, linestyle=:dot, label=false)
-    weight_plot = plot(history.epochs, history.weight_l2; xlabel="epoch", ylabel="mean |W|^2", label="weights",
-        color=:gray30, title="Weight Decay Trace")
-    phys_bar = channel_bar_panel(flatten_training_channel_matrix(rmse_phys), channel_labels,
-        "Final Channel RMSE", "RMSE")
-    norm_bar = channel_bar_panel(flatten_training_channel_matrix(rmse_norm), channel_labels,
-        "Final Channel Normalized RMSE", "normalized RMSE")
-    scale_bar = channel_bar_panel(flatten_training_channel_matrix(target_scale), channel_labels,
-        "Observable RMS Scales", "scale"; yscale=:log10)
-    info = text_panel(final_lines)
-    fig = plot(loss_plot, rmse_plot, mean_plot, weight_plot, phys_bar, norm_bar, scale_bar, info;
-        layout=(4, 2), size=(max(width * 2, 4200), max(height * 2, 3600)), margin=6Plots.mm)
-    savefig(fig, output_path)
+        output_path::AbstractString, width::Int, height::Int;
+        show_global_title::Bool=true,
+        show_summary::Bool=true,
+        use_latex::Bool=false)
+    nrows = show_summary ? 4 : 3
+    fw, fh = publication_panel_figure_size(nrows, 3;
+        base_w=max(width, 3200), base_h=max(height, show_summary ? 2350 : 2100),
+        panel_w=1080, panel_h=show_summary ? 560 : 620,
+        min_w=3200, min_h=show_summary ? 2350 : 2100, max_w=4300, max_h=show_summary ? 3100 : 2900)
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, "Mobility-NN training diagnostics")
+
+        epoch_label = use_latex ? latexstring("\\mathrm{epoch}") : "epoch"
+        loss_ylabel = use_latex ? latexstring("\\mathcal{L}_{\\mathrm{train}}") : "loss"
+        loss_title = use_latex ? latexstring("\\mathcal{L}_{\\mathrm{train}}") : "Training loss"
+        rmse_label = use_latex ? latexstring("\\mathrm{RMSE}") : "RMSE"
+        rmse_title = use_latex ? latexstring("\\mathrm{RMSE}_{\\mathrm{train}}") : "Training RMSE"
+        mean_label = use_latex ? latexstring("\\langle \\Delta M_{ij} \\rangle") : "⟨ΔM⟩"
+        mean_title = use_latex ? latexstring("\\langle \\Delta M_{ij} \\rangle") : "Mean ΔM entries"
+        weight_label = use_latex ? latexstring("W_2^2") : "mean |W|²"
+        weight_title = use_latex ? latexstring("W_2^2") : "Weight-decay trace"
+        channel_tick_labels = use_latex ? training_channel_tick_labels(channel_labels) : channel_labels
+        channel_xlabel = use_latex ? latexstring("\\mathrm{channel}") : "channel"
+        phys_title = use_latex ? latexstring("\\mathrm{RMSE}_{\\mathrm{channel}}") : "Final channel RMSE"
+        norm_title = use_latex ? latexstring("\\mathrm{nRMSE}_{\\mathrm{channel}}") : "Final channel normalized RMSE"
+        scale_title = use_latex ? latexstring("\\sigma_{\\mathrm{obs}}") : "Observable RMS scales"
+        phys_label = use_latex ? latexstring("\\mathrm{RMSE}") : "RMSE"
+        norm_label = use_latex ? latexstring("\\mathrm{nRMSE}") : "normalized RMSE"
+        scale_label = use_latex ? latexstring("\\sigma_{\\mathrm{obs}}") : "scale"
+
+        ax_loss = Axis(fig[1, 1]; xlabel=epoch_label, ylabel=loss_ylabel, title=loss_title)
+        lines!(ax_loss, history.epochs, history.train_loss;
+            color=STYLE_REFERENCE, label=use_latex ? latexstring("\\mathrm{normalized}") : "normalized loss")
+        axislegend(ax_loss; position=:rt)
+
+        ax_rmse = Axis(fig[1, 2:3]; xlabel=epoch_label, ylabel=rmse_label, title=rmse_title)
+        lines!(ax_rmse, history.epochs, history.physical_rmse;
+            color=STYLE_PRIMARY, label=use_latex ? latexstring("\\mathrm{physical}") : "physical")
+        lines!(ax_rmse, history.epochs, history.normalized_rmse;
+            color=STYLE_HIGHLIGHT, label=use_latex ? latexstring("\\mathrm{normalized}") : "normalized")
+        axislegend(ax_rmse; position=:rt)
+
+        ax_mean = Axis(fig[2, 1:2]; xlabel=epoch_label, ylabel=mean_label, title=mean_title)
+        hlines!(ax_mean, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+        lines!(ax_mean, history.epochs, history.mean_delta11; color=STYLE_REFERENCE,
+            label=use_latex ? latexstring("\\langle \\Delta M_{11} \\rangle") : "⟨ΔM₁₁⟩")
+        lines!(ax_mean, history.epochs, history.mean_delta12; color=STYLE_PRIMARY,
+            label=use_latex ? latexstring("\\langle \\Delta M_{12} \\rangle") : "⟨ΔM₁₂⟩")
+        lines!(ax_mean, history.epochs, history.mean_delta21; color=STYLE_HIGHLIGHT,
+            label=use_latex ? latexstring("\\langle \\Delta M_{21} \\rangle") : "⟨ΔM₂₁⟩")
+        lines!(ax_mean, history.epochs, history.mean_delta22; color=STYLE_ACCENT,
+            label=use_latex ? latexstring("\\langle \\Delta M_{22} \\rangle") : "⟨ΔM₂₂⟩")
+        axislegend(ax_mean; position=:rt, nbanks=2)
+
+        ax_w = Axis(fig[2, 3]; xlabel=epoch_label, ylabel=weight_label, title=weight_title)
+        lines!(ax_w, history.epochs, history.weight_l2; color=STYLE_MUTED,
+            label=use_latex ? latexstring("\\mathrm{weights}") : "weights")
+        axislegend(ax_w; position=:rt)
+
+        channel_bar_panel!(fig[3, 1],
+            flatten_training_channel_matrix(rmse_phys), channel_tick_labels,
+            phys_title, phys_label; xlabel=channel_xlabel)
+        channel_bar_panel!(fig[3, 2],
+            flatten_training_channel_matrix(rmse_norm), channel_tick_labels,
+            norm_title, norm_label; xlabel=channel_xlabel)
+        channel_bar_panel!(fig[3, 3],
+            flatten_training_channel_matrix(target_scale), channel_tick_labels,
+            scale_title, scale_label; yscale=log10, xlabel=channel_xlabel)
+
+        if show_summary
+            summary_columns = split_text_lines(final_lines, 3)
+            text_panel!(fig[4, 1], summary_columns[1]; title="Fit metrics")
+            text_panel!(fig[4, 2], summary_columns[2]; title="Diagnostics")
+            text_panel!(fig[4, 3], summary_columns[3]; title="Configuration")
+        end
+
+        apply_publication_grid!(fig.layout, nrows, 3;
+            row_weights=show_summary ? [1.0, 1.0, 1.0, 1.05] : [1.0, 1.0, 1.15],
+            col_weights=[1.0, 1.0, 1.2],
+            row_gap=30, col_gap=30)
+
+        save_figure(output_path, fig)
+    end
     return nothing
 end
 

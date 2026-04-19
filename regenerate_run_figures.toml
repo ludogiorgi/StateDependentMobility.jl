@@ -1,0 +1,39 @@
+# julia --project=. regenerate_run_figures.jl regenerate_run_figures.toml
+
+[input]
+run_dir = "runs/run_047"
+
+[output]
+figure_dir = "figures"
+overwrite = true
+
+[theme]
+px_per_unit = 1.65
+fontsize = 28
+axis_ticklabelsize = 25
+axis_labelsize = 31
+axis_titlesize = 33
+legend_labelsize = 24
+legend_titlesize = 25
+colorbar_labelsize = 28
+colorbar_ticklabelsize = 22
+label_fontsize = 31
+text_fontsize = 24
+summary_fontsize = 24
+summary_title_fontsize = 27
+figure_title_fontsize = 38
+figure_subtitle_fontsize = 27
+
+[render]
+use_latex = true
+show_global_titles = false
+show_metric_titles = false
+show_summary_panels = false
+
+[fit]
+width = 3400
+height = 2800
+
+[forward]
+width = 4200
+height = 3600

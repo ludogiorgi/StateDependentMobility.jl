@@ -1081,6 +1081,24 @@ function cphi_display_labels(train_pairs::Vector{Tuple{Int, Int}})
     return ["C_{$(labels[m]),$(labels[n])}(t)" for (m, n) in train_pairs]
 end
 
+function cphi_display_label_latex(label::AbstractString)
+    match_obj = match(r"^C_\{([^,]+),([^}]+)\}\(([^)]+)\)$", String(label))
+    match_obj === nothing && return latexstring(replace(String(label), "_" => "\\_"))
+    return latex_channel_label("C", strip(match_obj.captures[1]), strip(match_obj.captures[2]);
+        argument="\\tau")
+end
+
+function reference_latex_tag(reference_label::String)
+    lowered = lowercase(reference_label)
+    if occursin("observed", lowered)
+        return "\\mathrm{obs}"
+    end
+    if occursin("true", lowered)
+        return "\\mathrm{ref}"
+    end
+    return "\\mathrm{ref}"
+end
+
 function artifact_lag_steps(artifact_data, saved_dt::Float64)
     require_condition(haskey(artifact_data, :lag_times), "Expected :lag_times in mobility artifact diagnostics.")
     lag_times = Float64.(vec(artifact_data[:lag_times]))
@@ -1296,34 +1314,26 @@ function rmse_improvement_percent(phi_rmse::Float64, full_rmse::Float64)
     return phi_rmse > 0.0 ? 100.0 * (phi_rmse - full_rmse) / phi_rmse : 0.0
 end
 
-function summary_text_panel(lines::Vector{String})
-    panel = plot(; axis=nothing, framestyle=:none, xlim=(0, 1), ylim=(0, 1))
-    y = 0.96
-    for line in lines
-        annotate!(panel, 0.02, y, text(line, 10, :left, :top, "DejaVu Sans"))
-        y -= 0.08
-    end
-    return panel
-end
-
-function density_heatmap_panel(density::Density2D, title::String; clims=nothing, color=:viridis)
-    kwargs = Dict{Symbol, Any}(
-        :xlabel => "x",
-        :ylabel => "y",
-        :title => title,
-        :aspect_ratio => :equal,
-        :colorbar => true,
-        :color => color,
-    )
-    if clims !== nothing
-        kwargs[:clims] = clims
-    end
-    return heatmap(density.xgrid, density.ygrid, density.density'; kwargs...)
+function density_heatmap_panel!(parent, density::Density2D, title;
+        clims=nothing, color=STYLE_SEQUENTIAL, xlabel="x", ylabel="y")
+    gl = GridLayout(parent)
+    ax = Axis(gl[1, 1]; xlabel=xlabel, ylabel=ylabel, title=title,
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    crange = clims === nothing ? Makie.automatic : clims
+    hm = heatmap!(ax, density.xgrid, density.ygrid, density.density;
+        colormap=color, colorrange=crange)
+    Colorbar(gl[1, 2], hm)
+    return gl
 end
 
 function create_reference_stats_figure(pdf_data, corr_data_full, corr_data_phi, aux_data_full::Dict{Symbol, Any},
         aux_data_phi::Dict{Symbol, Any}, output_path::AbstractString, width::Int, height::Int;
-        reference_label::String, reference_title::String, extra_summary_lines::Vector{String}=String[])
+    reference_label::String, reference_title::String, extra_summary_lines::Vector{String}=String[],
+    show_global_title::Bool=true,
+    show_metrics::Bool=true,
+    show_summary::Bool=true,
+    use_latex::Bool=false)
     pdf_true_x = pdf_data[:true_x]
     pdf_pred_x = pdf_data[:pred_x]
     pdf_true_y = pdf_data[:true_y]
@@ -1337,76 +1347,187 @@ function create_reference_stats_figure(pdf_data, corr_data_full, corr_data_phi, 
     corr_metrics_full = corr_data_full[:metrics]
     corr_metrics_phi = corr_data_phi[:metrics]
 
-    p1 = plot(pdf_true_x.centers, pdf_true_x.density; xlabel="x", ylabel="density", label=reference_label,
-        color=:black, title=@sprintf("PDF x | RMSE %.3e | KL %.3e", pdf_metrics[:rmse_x], pdf_metrics[:kl_x]))
-    plot!(p1, pdf_pred_x.centers, pdf_pred_x.density; label="learned", color=:royalblue3, linestyle=:dash)
+    nrows = show_summary ? 3 : 4
+    ncols = show_summary ? 3 : 2
+    fw, fh = publication_panel_figure_size(nrows, ncols;
+        base_w=width,
+        base_h=show_summary ? height : max(height, 3200),
+        panel_w=show_summary ? 980 : 1200,
+        panel_h=show_summary ? 700 : 700,
+        min_w=show_summary ? 2900 : 2600,
+        min_h=show_summary ? 2300 : 3200,
+        max_w=4200,
+        max_h=show_summary ? 3400 : 5200)
 
-    p2 = plot(pdf_true_y.centers, pdf_true_y.density; xlabel="y", ylabel="density", label=reference_label,
-        color=:black, title=@sprintf("PDF y | RMSE %.3e | KL %.3e", pdf_metrics[:rmse_y], pdf_metrics[:kl_y]))
-    plot!(p2, pdf_pred_y.centers, pdf_pred_y.density; label="learned", color=:royalblue3, linestyle=:dash)
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, reference_title * "  vs learned dynamics")
 
-    max_xy = maximum(vcat(vec(pdf_true_xy.density), vec(pdf_pred_xy.density)))
-    p4 = density_heatmap_panel(pdf_true_xy, reference_title * " p(x,y)"; clims=(0.0, max_xy))
-    p5 = density_heatmap_panel(pdf_pred_xy, "Learned p(x,y)"; clims=(0.0, max_xy))
-    diff_xy = Density2D(pdf_true_xy.xgrid, pdf_true_xy.ygrid, pdf_pred_xy.density .- pdf_true_xy.density,
-        pdf_true_xy.xboundary, pdf_true_xy.yboundary)
-    diff_clim = maximum(abs.(diff_xy.density))
-    p6 = density_heatmap_panel(diff_xy, @sprintf("Density Difference | RMSE %.3e | KL %.3e", pdf_metrics[:rmse_xy], pdf_metrics[:kl_xy]);
-        clims=(-diff_clim, diff_clim), color=:balance)
+        ref_tag = use_latex ? reference_latex_tag(reference_label) : nothing
+        x_label = use_latex ? latexstring("x") : "x"
+        y_label = use_latex ? latexstring("y") : "y"
+        lag_label = use_latex ? latexstring("\\tau") : "lag"
+        density_label = use_latex ? latexstring("p") : "density"
+        acf_label = use_latex ? latexstring("\\mathrm{ACF}") : "ACF"
+        cross_label = use_latex ? latexstring("C") : "cross-corr"
+        px_title = show_metrics ? @sprintf("Marginal p(x)    RMSE %.3e  |  KL %.3e",
+            pdf_metrics[:rmse_x], pdf_metrics[:kl_x]) : (use_latex ? latexstring("p(x)") : "Marginal p(x)")
+        py_title = show_metrics ? @sprintf("Marginal p(y)    RMSE %.3e  |  KL %.3e",
+            pdf_metrics[:rmse_y], pdf_metrics[:kl_y]) : (use_latex ? latexstring("p(y)") : "Marginal p(y)")
+        ref_pdf_label = use_latex ? latexstring("p_{" * ref_tag * "}") : reference_label
+        nn_pdf_label = use_latex ? latexstring("p_{\\mathrm{NN}}") : "learned"
+        full_label = use_latex ? latexstring("\\mathrm{full}") : "learned full"
+        phi_label = use_latex ? latexstring("\\Phi") : "Φ-only"
 
-    p7 = plot(corr_true.lags, corr_true.acf_x; xlabel="lag", ylabel="corr", label=reference_label,
-        color=:black, title=@sprintf("ACF x | full %.3e | Phi %.3e", corr_metrics_full[:rmse_acf_x], corr_metrics_phi[:rmse_acf_x]))
-    plot!(p7, corr_pred_full.lags, corr_pred_full.acf_x; label="learned full", color=:royalblue3, linestyle=:dash)
-    plot!(p7, corr_pred_phi.lags, corr_pred_phi.acf_x; label="Phi-only", color=:firebrick3, linestyle=:dot)
+        ax1 = Axis(fig[1, 1]; xlabel=x_label, ylabel=density_label, title=px_title)
+        lines!(ax1, pdf_true_x.centers, pdf_true_x.density;
+            color=STYLE_REFERENCE, label=ref_pdf_label)
+        lines!(ax1, pdf_pred_x.centers, pdf_pred_x.density;
+            color=STYLE_PRIMARY, linestyle=:dash, label=nn_pdf_label)
+        axislegend(ax1; position=:rt)
 
-    p8 = plot(corr_true.lags, corr_true.acf_y; xlabel="lag", ylabel="corr", label=reference_label,
-        color=:black, title=@sprintf("ACF y | full %.3e | Phi %.3e", corr_metrics_full[:rmse_acf_y], corr_metrics_phi[:rmse_acf_y]))
-    plot!(p8, corr_pred_full.lags, corr_pred_full.acf_y; label="learned full", color=:royalblue3, linestyle=:dash)
-    plot!(p8, corr_pred_phi.lags, corr_pred_phi.acf_y; label="Phi-only", color=:firebrick3, linestyle=:dot)
+        ax2 = Axis(fig[1, 2]; xlabel=y_label, ylabel=density_label, title=py_title)
+        lines!(ax2, pdf_true_y.centers, pdf_true_y.density;
+            color=STYLE_REFERENCE, label=ref_pdf_label)
+        lines!(ax2, pdf_pred_y.centers, pdf_pred_y.density;
+            color=STYLE_PRIMARY, linestyle=:dash, label=nn_pdf_label)
+        axislegend(ax2; position=:rt)
 
-    p9 = plot(corr_true.lags, corr_true.cross_xy; xlabel="lag", ylabel="corr", label=reference_label * " Cxy",
-        color=:black, title=@sprintf("Cross Corr | full xy/yx %.3e / %.3e | Phi %.3e / %.3e",
-            corr_metrics_full[:rmse_cross_xy], corr_metrics_full[:rmse_cross_yx],
-            corr_metrics_phi[:rmse_cross_xy], corr_metrics_phi[:rmse_cross_yx]))
-    plot!(p9, corr_pred_full.lags, corr_pred_full.cross_xy; label="learned full Cxy", color=:royalblue3, linestyle=:dash)
-    plot!(p9, corr_pred_phi.lags, corr_pred_phi.cross_xy; label="Phi-only Cxy", color=:firebrick3, linestyle=:dot)
-    plot!(p9, corr_true.lags, corr_true.cross_yx; label=reference_label * " Cyx", color=:darkorange)
-    plot!(p9, corr_pred_full.lags, corr_pred_full.cross_yx; label="learned full Cyx", color=:seagreen4, linestyle=:dashdot)
-    plot!(p9, corr_pred_phi.lags, corr_pred_phi.cross_yx; label="Phi-only Cyx", color=:purple4, linestyle=:dot)
+        max_xy = maximum(vcat(vec(pdf_true_xy.density), vec(pdf_pred_xy.density)))
+        diff_xy = Density2D(pdf_true_xy.xgrid, pdf_true_xy.ygrid, pdf_pred_xy.density .- pdf_true_xy.density,
+            pdf_true_xy.xboundary, pdf_true_xy.yboundary)
+        diff_clim = maximum(abs.(diff_xy.density))
 
-    lines = [
-        @sprintf("tD %s/full/Phi = %.3f / %.3f / %.3f", reference_label,
-            corr_metrics_full[:tdec_true], corr_metrics_full[:tdec_pred], corr_metrics_phi[:tdec_pred]),
-        @sprintf("ACF-x improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_acf_x], corr_metrics_full[:rmse_acf_x])),
-        @sprintf("ACF-y improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_acf_y], corr_metrics_full[:rmse_acf_y])),
-        @sprintf("cross-xy improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_cross_xy], corr_metrics_full[:rmse_cross_xy])),
-        @sprintf("cross-yx improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_cross_yx], corr_metrics_full[:rmse_cross_yx])),
-        @sprintf("excursion frac full/Phi = %.3e / %.3e", aux_data_full[:saved_excursion_fraction], aux_data_phi[:saved_excursion_fraction]),
-        @sprintf("lambda_min(D) full/Phi = %.3e / %.3e", aux_data_full[:lambda_min_min], aux_data_phi[:lambda_min_min]),
-        @sprintf("drift norm mean full/Phi = %.3e / %.3e", aux_data_full[:drift_norm_mean], aux_data_phi[:drift_norm_mean]),
-    ]
-    append!(lines, extra_summary_lines)
-    push!(lines, @sprintf("<M> full = [%.3e, %.3e, %.3e, %.3e]", aux_data_full[:mobility_mean]...))
-    push!(lines, @sprintf("<M> Phi = [%.3e, %.3e, %.3e, %.3e]", aux_data_phi[:mobility_mean]...))
-    p3 = summary_text_panel(lines)
+        summary_lines_full = [
+            @sprintf("tD %s/full/Phi = %.3f / %.3f / %.3f", reference_label,
+                corr_metrics_full[:tdec_true], corr_metrics_full[:tdec_pred], corr_metrics_phi[:tdec_pred]),
+            @sprintf("ACF-x improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_acf_x], corr_metrics_full[:rmse_acf_x])),
+            @sprintf("ACF-y improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_acf_y], corr_metrics_full[:rmse_acf_y])),
+            @sprintf("cross-xy improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_cross_xy], corr_metrics_full[:rmse_cross_xy])),
+            @sprintf("cross-yx improvement over Phi = %.2f%%", rmse_improvement_percent(corr_metrics_phi[:rmse_cross_yx], corr_metrics_full[:rmse_cross_yx])),
+            @sprintf("excursion frac full/Phi = %.3e / %.3e", aux_data_full[:saved_excursion_fraction], aux_data_phi[:saved_excursion_fraction]),
+            @sprintf("lambda_min(D) full/Phi = %.3e / %.3e", aux_data_full[:lambda_min_min], aux_data_phi[:lambda_min_min]),
+            @sprintf("drift norm mean full/Phi = %.3e / %.3e", aux_data_full[:drift_norm_mean], aux_data_phi[:drift_norm_mean]),
+        ]
+        append!(summary_lines_full, extra_summary_lines)
+        push!(summary_lines_full, @sprintf("<M> full = [%.3e, %.3e, %.3e, %.3e]", aux_data_full[:mobility_mean]...))
+        push!(summary_lines_full, @sprintf("<M> Phi = [%.3e, %.3e, %.3e, %.3e]", aux_data_phi[:mobility_mean]...))
 
-    fig = plot(p1, p2, p3, p4, p5, p6, p7, p8, p9; layout=(3, 3), size=(width, height), margin=6Plots.mm)
-    savefig(fig, output_path)
+        if show_summary
+            text_panel!(fig[1, 3], summary_lines_full; title="Forward-validation summary")
+            density_heatmap_panel!(fig[2, 1], pdf_true_xy,
+                use_latex ? latexstring("p_{" * ref_tag * "}(x,y)") : reference_title * "  p(x,y)";
+                clims=(0.0, max_xy), xlabel=x_label, ylabel=y_label)
+            density_heatmap_panel!(fig[2, 2], pdf_pred_xy,
+                use_latex ? latexstring("p_{\\mathrm{NN}}(x,y)") : "Learned  p(x,y)";
+                clims=(0.0, max_xy), xlabel=x_label, ylabel=y_label)
+            density_heatmap_panel!(fig[2, 3], diff_xy,
+                show_metrics ? @sprintf("Density residual    RMSE %.3e  |  KL %.3e",
+                    pdf_metrics[:rmse_xy], pdf_metrics[:kl_xy]) : (use_latex ? latexstring("\\Delta p(x,y)") : "Density residual");
+                clims=(-diff_clim, diff_clim), color=STYLE_DIVERGING, xlabel=x_label, ylabel=y_label)
+        else
+            density_heatmap_panel!(fig[2, 1], pdf_true_xy,
+                use_latex ? latexstring("p_{" * ref_tag * "}(x,y)") : reference_title * "  p(x,y)";
+                clims=(0.0, max_xy), xlabel=x_label, ylabel=y_label)
+            density_heatmap_panel!(fig[2, 2], pdf_pred_xy,
+                use_latex ? latexstring("p_{\\mathrm{NN}}(x,y)") : "Learned  p(x,y)";
+                clims=(0.0, max_xy), xlabel=x_label, ylabel=y_label)
+            density_heatmap_panel!(fig[3, 1], diff_xy,
+                show_metrics ? @sprintf("Density residual    RMSE %.3e  |  KL %.3e",
+                    pdf_metrics[:rmse_xy], pdf_metrics[:kl_xy]) : (use_latex ? latexstring("\\Delta p(x,y)") : "Density residual");
+                clims=(-diff_clim, diff_clim), color=STYLE_DIVERGING, xlabel=x_label, ylabel=y_label)
+        end
+
+        ax_acf_x = Axis(show_summary ? fig[3, 1] : fig[3, 2];
+            xlabel=lag_label, ylabel=acf_label,
+            title=show_metrics ? @sprintf("ACF  x     full %.3e  |  Φ %.3e",
+                corr_metrics_full[:rmse_acf_x], corr_metrics_phi[:rmse_acf_x]) :
+                (use_latex ? latexstring("\\mathrm{ACF}_x(\\tau)") : "ACF x"))
+        hlines!(ax_acf_x, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+        lines!(ax_acf_x, corr_true.lags, corr_true.acf_x; color=STYLE_REFERENCE,
+            label=use_latex ? latexstring("\\mathrm{ref}") : reference_label)
+        lines!(ax_acf_x, corr_pred_full.lags, corr_pred_full.acf_x;
+            color=STYLE_PRIMARY, linestyle=:dash, label=full_label)
+        lines!(ax_acf_x, corr_pred_phi.lags, corr_pred_phi.acf_x;
+            color=STYLE_SECONDARY, linestyle=:dot, label=phi_label)
+        axislegend(ax_acf_x; position=:rt)
+
+        ax_acf_y = Axis(show_summary ? fig[3, 2] : fig[4, 1];
+            xlabel=lag_label, ylabel=acf_label,
+            title=show_metrics ? @sprintf("ACF  y     full %.3e  |  Φ %.3e",
+                corr_metrics_full[:rmse_acf_y], corr_metrics_phi[:rmse_acf_y]) :
+                (use_latex ? latexstring("\\mathrm{ACF}_y(\\tau)") : "ACF y"))
+        hlines!(ax_acf_y, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+        lines!(ax_acf_y, corr_true.lags, corr_true.acf_y; color=STYLE_REFERENCE,
+            label=use_latex ? latexstring("\\mathrm{ref}") : reference_label)
+        lines!(ax_acf_y, corr_pred_full.lags, corr_pred_full.acf_y;
+            color=STYLE_PRIMARY, linestyle=:dash, label=full_label)
+        lines!(ax_acf_y, corr_pred_phi.lags, corr_pred_phi.acf_y;
+            color=STYLE_SECONDARY, linestyle=:dot, label=phi_label)
+        axislegend(ax_acf_y; position=:rt)
+
+        ax_cross = Axis(show_summary ? fig[3, 3] : fig[4, 2];
+            xlabel=lag_label, ylabel=cross_label,
+            title=show_metrics ? @sprintf("Cross-corr    full xy/yx %.3e / %.3e   |   Φ %.3e / %.3e",
+                corr_metrics_full[:rmse_cross_xy], corr_metrics_full[:rmse_cross_yx],
+                corr_metrics_phi[:rmse_cross_xy], corr_metrics_phi[:rmse_cross_yx]) :
+                (use_latex ? latexstring("C_{xy}(\\tau),\\ C_{yx}(\\tau)") : "Cross-corr"))
+        hlines!(ax_cross, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+        lines!(ax_cross, corr_true.lags, corr_true.cross_xy;
+            color=STYLE_REFERENCE, label=use_latex ? latexstring("C_{xy}^{\\mathrm{ref}}") : reference_label * "  C_xy")
+        lines!(ax_cross, corr_pred_full.lags, corr_pred_full.cross_xy;
+            color=STYLE_PRIMARY, linestyle=:dash, label=use_latex ? latexstring("C_{xy}^{\\mathrm{full}}") : "learned full  C_xy")
+        lines!(ax_cross, corr_pred_phi.lags, corr_pred_phi.cross_xy;
+            color=STYLE_SECONDARY, linestyle=:dot, label=use_latex ? latexstring("C_{xy}^{\\Phi}") : "Φ-only  C_xy")
+        lines!(ax_cross, corr_true.lags, corr_true.cross_yx;
+            color=STYLE_HIGHLIGHT, label=use_latex ? latexstring("C_{yx}^{\\mathrm{ref}}") : reference_label * "  C_yx")
+        lines!(ax_cross, corr_pred_full.lags, corr_pred_full.cross_yx;
+            color=STYLE_ACCENT, linestyle=:dashdot, label=use_latex ? latexstring("C_{yx}^{\\mathrm{full}}") : "learned full  C_yx")
+        lines!(ax_cross, corr_pred_phi.lags, corr_pred_phi.cross_yx;
+            color=STYLE_VIOLET, linestyle=:dot, label=use_latex ? latexstring("C_{yx}^{\\Phi}") : "Φ-only  C_yx")
+        axislegend(ax_cross; position=:rt, nbanks=2)
+
+        apply_publication_grid!(fig.layout, nrows, ncols;
+            row_weights=show_summary ? [1.0, 1.1, 1.0] : [0.9, 1.1, 1.0, 1.0],
+            col_weights=show_summary ? [1.0, 1.0, 1.05] : [1.0, 1.0],
+            row_gap=30, col_gap=28)
+
+        save_figure(output_path, fig)
+    end
     return nothing
 end
 
-function create_cphi_figure(cphi_data_full, cphi_data_phi, labels::Vector{String}, output_path::AbstractString, width::Int, height::Int)
-    plots = Any[]
-    for idx in 1:length(labels)
-        panel = plot(cphi_data_full[:lag_times], cphi_data_full[:true][:, idx]; xlabel="lag", ylabel="Cphi", label="true", color=:black,
-            title=@sprintf("%s | full %.3e | Phi %.3e", labels[idx], cphi_data_full[:channel_rmse][idx], cphi_data_phi[:channel_rmse][idx]))
-        plot!(panel, cphi_data_full[:lag_times], cphi_data_full[:pred][:, idx]; label="learned full", color=:royalblue3, linestyle=:dash)
-        plot!(panel, cphi_data_phi[:lag_times], cphi_data_phi[:pred][:, idx]; label="Phi-only", color=:firebrick3, linestyle=:dot)
-        push!(plots, panel)
+function create_cphi_figure(cphi_data_full, cphi_data_phi, labels::Vector{String}, output_path::AbstractString, width::Int, height::Int;
+        show_global_title::Bool=true,
+        show_metrics::Bool=true,
+        use_latex::Bool=false)
+    nrows, ncols = panel_grid_dims(length(labels); max_cols=3)
+    fw, fh = publication_panel_figure_size(nrows, ncols;
+        base_w=width, base_h=height, panel_w=1100, panel_h=620,
+        min_w=1900, min_h=1400, max_w=4300, max_h=4600)
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, "Learned vs reference  C_φ(τ)")
+        lag_label = use_latex ? latexstring("\\tau") : "lag"
+        cphi_label = use_latex ? latexstring("C_{\\phi}(\\tau)") : "C_φ"
+        for idx in 1:length(labels)
+            r, c = centered_panel_rc(idx, length(labels), ncols)
+            panel_title = show_metrics ? @sprintf("%s      full %.3e  |  Φ %.3e",
+                labels[idx], cphi_data_full[:channel_rmse][idx], cphi_data_phi[:channel_rmse][idx]) :
+                (use_latex ? cphi_display_label_latex(labels[idx]) : labels[idx])
+            ax = Axis(fig[r, c]; xlabel=lag_label, ylabel=cphi_label, title=panel_title)
+            hlines!(ax, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+            lines!(ax, cphi_data_full[:lag_times], cphi_data_full[:true][:, idx];
+                color=STYLE_REFERENCE, label=use_latex ? latexstring("\\mathrm{ref}") : "true")
+            lines!(ax, cphi_data_full[:lag_times], cphi_data_full[:pred][:, idx];
+                color=STYLE_PRIMARY, linestyle=:dash, label=use_latex ? latexstring("\\mathrm{full}") : "learned full")
+            lines!(ax, cphi_data_phi[:lag_times], cphi_data_phi[:pred][:, idx];
+                color=STYLE_SECONDARY, linestyle=:dot, label=use_latex ? latexstring("\\Phi") : "Φ-only")
+            idx == 1 && axislegend(ax; position=:rt)
+        end
+        apply_publication_grid!(fig.layout, nrows, ncols; row_gap=32, col_gap=32)
+        save_figure(output_path, fig)
     end
-    nrows, ncols = panel_grid_dims(length(labels))
-    fig = plot(plots...; layout=(nrows, ncols), size=(max(width, 1200 * ncols), max(height, 900 * nrows)), margin=6Plots.mm)
-    savefig(fig, output_path)
     return nothing
 end
 

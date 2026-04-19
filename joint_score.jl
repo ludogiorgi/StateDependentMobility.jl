@@ -21,7 +21,7 @@ function ensure_packages(packages::Vector{String})
 end
 
 ENV["GKSwstype"] = get(ENV, "GKSwstype", "100")
-ensure_packages(["Flux", "BSON", "HDF5", "Plots", "CUDA", "ProgressMeter", "KernelDensity"])
+ensure_packages(["Flux", "BSON", "HDF5", "GLMakie", "CUDA", "ProgressMeter", "KernelDensity"])
 
 using BSON
 using CUDA
@@ -29,15 +29,13 @@ using Flux
 using HDF5
 using KernelDensity
 using LinearAlgebra
-using Plots
 using Printf
 using ProgressMeter
 using Random
 using Statistics
 using TOML
 
-gr()
-default(fontfamily="DejaVu Sans", lw=2, size=(2600, 2400), dpi=180)
+include(joinpath(@__DIR__, "src", "figure_style.jl"))
 
 const DEFAULT_PARAM_FILE = joinpath(@__DIR__, "joint_score.toml")
 const JOINT_DIM = 4
@@ -513,14 +511,12 @@ function evaluate_tau(model, sampler::PairSampler, tau::Float64, lag::Int, tnorm
     return JointEvalRecord(tau, tnorm, observed_pairs, gen_pairs, observed_xpair, generated_xpair, observed_ypair, generated_ypair, stein_mat, diag)
 end
 
-function summary_panel(params::JointScoreTrainingParams, sampler::PairSampler, history, eval_records::Vector{JointEvalRecord})
+function summary_lines(params::JointScoreTrainingParams, sampler::PairSampler, history, eval_records::Vector{JointEvalRecord})
     mean_accuracy = mean(record.diag.accuracy for record in eval_records)
     mean_kl = mean(record.diag.mean_kl for record in eval_records)
     mean_stein = mean(record.diag.stein_error for record in eval_records)
 
-    p = plot(xlim=(0, 1), ylim=(0, 1), axis=false, grid=false, legend=false,
-        background_color=:white, framestyle=:none, title="Summary")
-    lines = [
+    return [
         @sprintf("tau range = [%.2f, %.2f]", sampler.tau_min, sampler.tau_max),
         @sprintf("lags used = %d", length(sampler.lag_steps)),
         @sprintf("sigma = %.3f", params.sigma),
@@ -536,43 +532,44 @@ function summary_panel(params::JointScoreTrainingParams, sampler::PairSampler, h
         @sprintf("mean accuracy = %.6f", mean_accuracy),
         @sprintf("mean stein err = %.3e", mean_stein),
     ]
-    y = 0.95
-    for line in lines
-        annotate!(p, 0.03, y, text(line, 10, :left, :black, "DejaVu Sans"))
-        y -= 0.062
-    end
-    return p
 end
 
-function metrics_panel(eval_records::Vector{JointEvalRecord})
+function metrics_panel!(parent, eval_records::Vector{JointEvalRecord})
     taus = [record.tau for record in eval_records]
     accuracies = [record.diag.accuracy for record in eval_records]
     stein_errors = [record.diag.stein_error for record in eval_records]
 
-    p = plot(taus, accuracies, xlabel="tau", ylabel="Accuracy", title="Joint PDF Accuracy by Lag",
-        marker=:circle, color=:steelblue, label="accuracy", ylim=(0.0, 1.02))
-    plot!(p, taus, exp.(-stein_errors), marker=:diamond, color=:darkorange, label="exp(-stein err)")
-    return p
+    ax = Axis(parent; xlabel="τ", ylabel="score",
+        title="Joint PDF accuracy across lags")
+    ylims!(ax, 0.0, 1.05)
+    lines!(ax, taus, accuracies; color=STYLE_PRIMARY, label="accuracy")
+    scatter!(ax, taus, accuracies; color=STYLE_PRIMARY, marker=:circle)
+    lines!(ax, taus, exp.(-stein_errors); color=STYLE_HIGHLIGHT, label="exp(-Stein err)")
+    scatter!(ax, taus, exp.(-stein_errors); color=STYLE_HIGHLIGHT, marker=:diamond)
+    axislegend(ax; position=:rb)
+    return ax
 end
 
-function stein_colormap()
-    return cgrad(["#dbe7f0", "#eef3f8", "#f7f7f5", "#f3e8e1", "#dfc6bb"])
-end
-
-function stein_plot(stein_mat::Matrix{Float64}, tau::Float64, diag::JointPDFDiagnostics)
-    labels = ["x0", "y0", "xt", "yt"]
+function stein_panel!(parent, stein_mat::Matrix{Float64}, tau::Float64, diag::JointPDFDiagnostics)
+    labels = ["x₀", "y₀", "xₜ", "yₜ"]
     clim = max(maximum(abs.(stein_mat)), 1e-6)
-    p = heatmap(1:JOINT_DIM, 1:JOINT_DIM, stein_mat; xlabel="j", ylabel="i",
-        title=@sprintf("Stein tau=%.2f\nKL=%.2e  acc=%.3f", tau, diag.mean_kl, diag.accuracy),
-        colorbar=true, c=stein_colormap(), clims=(-clim, clim), aspect_ratio=:equal,
-        xticks=(1:JOINT_DIM, labels), yticks=(1:JOINT_DIM, labels))
+    gl = GridLayout(parent)
+    ax = Axis(gl[1, 1]; xlabel="j", ylabel="i",
+        title=@sprintf("Stein matrix  τ=%.2f\nKL=%.2e   acc=%.3f", tau, diag.mean_kl, diag.accuracy),
+        xticks=(1:JOINT_DIM, labels), yticks=(1:JOINT_DIM, labels),
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    hm = heatmap!(ax, 1:JOINT_DIM, 1:JOINT_DIM, stein_mat;
+        colormap=STYLE_DIVERGING_SOFT, colorrange=(-clim, clim))
+    Colorbar(gl[1, 2], hm)
     for i in 1:JOINT_DIM, j in 1:JOINT_DIM
-        annotate!(p, j, i, text(@sprintf("%.2f", stein_mat[i, j]), 8, :black))
+        text!(ax, j, i; text=(@sprintf("%.2f", stein_mat[i, j])),
+            align=(:center, :center), color=STYLE_REFERENCE, fontsize=12)
     end
-    return p
+    return gl
 end
 
-function univariate_pair_panel(observed_pairs::Matrix{Float32}, generated_pairs::Matrix{Float32},
+function univariate_pair_panel!(parent, observed_pairs::Matrix{Float32}, generated_pairs::Matrix{Float32},
         coord_a::Int, coord_b::Int, bins::Int, tau::Float64, label_a::String, label_b::String)
     obs_a = Float64.(vec(observed_pairs[coord_a, :]))
     obs_b = Float64.(vec(observed_pairs[coord_b, :]))
@@ -586,13 +583,14 @@ function univariate_pair_panel(observed_pairs::Matrix{Float32}, generated_pairs:
     centers_b, dens_obs_b, _ = compute_histogram_1d(obs_b, bins; range_override=range_b)
     _, dens_gen_b, _ = compute_histogram_1d(gen_b, bins; range_override=range_b)
 
-    p = plot(centers_a, dens_obs_a; xlabel="value", ylabel="PDF",
-        title=@sprintf("Marginals tau=%.2f", tau), label="$(label_a) obs",
-        color=:steelblue, linestyle=:solid)
-    plot!(p, centers_a, dens_gen_a; label="$(label_a) gen", color=:steelblue, linestyle=:dash)
-    plot!(p, centers_b, dens_obs_b; label="$(label_b) obs", color=:seagreen, linestyle=:solid)
-    plot!(p, centers_b, dens_gen_b; label="$(label_b) gen", color=:seagreen, linestyle=:dash)
-    return p
+    ax = Axis(parent; xlabel="value", ylabel="density",
+        title=@sprintf("Marginal densities  τ=%.2f", tau))
+    lines!(ax, centers_a, dens_obs_a; color=STYLE_PRIMARY, label="$(label_a) obs")
+    lines!(ax, centers_a, dens_gen_a; color=STYLE_PRIMARY, linestyle=:dash, label="$(label_a) gen")
+    lines!(ax, centers_b, dens_obs_b; color=STYLE_ACCENT, label="$(label_b) obs")
+    lines!(ax, centers_b, dens_gen_b; color=STYLE_ACCENT, linestyle=:dash, label="$(label_b) gen")
+    axislegend(ax; position=:rt, nbanks=2)
+    return ax
 end
 
 function contour_levels_from_densities(density_a::Matrix{Float64}, density_b::Matrix{Float64})
@@ -600,46 +598,62 @@ function contour_levels_from_densities(density_a::Matrix{Float64}, density_b::Ma
     return collect(range(0.15 * vmax, 0.9 * vmax, length=6))
 end
 
-function contour_pair_panel(observed::PairDensity2D, generated::PairDensity2D, tau::Float64,
+function contour_pair_panel!(parent, observed::PairDensity2D, generated::PairDensity2D, tau::Float64,
         xlabel::String, ylabel::String, title_label::String)
     levels = contour_levels_from_densities(observed.density, generated.density)
-    p = contour(observed.xgrid, observed.ygrid, observed.density; levels=levels,
-        xlabel=xlabel, ylabel=ylabel, title=@sprintf("%s tau=%.2f", title_label, tau),
-        color=:black, linewidth=2, linestyle=:solid, label="obs", colorbar=false)
-    contour!(p, generated.xgrid, generated.ygrid, generated.density; levels=levels,
-        color=:darkorange, linewidth=2, linestyle=:dash, label="generated", colorbar=false)
-    return p
+    ax = Axis(parent; xlabel=xlabel, ylabel=ylabel,
+        title=@sprintf("%s  τ=%.2f", title_label, tau),
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    contour!(ax, observed.xgrid, observed.ygrid, observed.density;
+        levels=levels, color=STYLE_REFERENCE, linewidth=2.0, linestyle=:solid)
+    contour!(ax, generated.xgrid, generated.ygrid, generated.density;
+        levels=levels, color=STYLE_HIGHLIGHT, linewidth=2.0, linestyle=:dash)
+    elements = [LineElement(color=STYLE_REFERENCE, linewidth=2.4),
+                LineElement(color=STYLE_HIGHLIGHT, linewidth=2.4, linestyle=:dash)]
+    axislegend(ax, elements, ["observed", "generated"]; position=:rt)
+    return ax
 end
 
 function create_diagnostics_figure(params::JointScoreTrainingParams, sampler::PairSampler, history,
         eval_records::Vector{JointEvalRecord}, output_path::AbstractString)
-    epochs = 1:length(history[:train_loss])
+    epochs = collect(1:length(history[:train_loss]))
+    nrows = 1 + length(eval_records)
+    panel_h = 460
+    panel_w = 540
+    fig = Figure(; size=(panel_w * 5, panel_h * nrows))
 
-    plots = Any[]
-    push!(plots, plot(epochs, history[:train_loss], xlabel="Epoch", ylabel="Loss", yscale=:log10,
-        title="Train DSM Loss", label="train", color=:steelblue))
-    push!(plots, plot(epochs, history[:score_norm], xlabel="Epoch", ylabel="Norm",
-        title="Train Score Norm", label="score norm", color=:seagreen))
-    push!(plots, plot(epochs, history[:param_norm], xlabel="Epoch", ylabel="Norm",
-        title="Parameter Norm", label="param norm", color=:darkorange))
-    push!(plots, metrics_panel(eval_records))
-    push!(plots, summary_panel(params, sampler, history, eval_records))
+    ax_loss = Axis(fig[1, 1]; xlabel="Epoch", ylabel="Loss", yscale=log10,
+        title="Training DSM Loss")
+    lines!(ax_loss, epochs, history[:train_loss]; color=STYLE_PRIMARY, label="train")
+    axislegend(ax_loss; position=:rt)
 
-    for record in eval_records
-        push!(plots, univariate_pair_panel(record.observed_pairs, record.generated_pairs,
-            1, 3, params.pdf_bins, record.tau, "x0", "xt"))
-        push!(plots, univariate_pair_panel(record.observed_pairs, record.generated_pairs,
-            2, 4, params.pdf_bins, record.tau, "y0", "yt"))
-        push!(plots, contour_pair_panel(record.observed_xpair, record.generated_xpair,
-            record.tau, "x0", "xt", @sprintf("(x0, xt), KL=%.2e", record.diag.kl_xpair)))
-        push!(plots, contour_pair_panel(record.observed_ypair, record.generated_ypair,
-            record.tau, "y0", "yt", @sprintf("(y0, yt), KL=%.2e", record.diag.kl_ypair)))
-        push!(plots, stein_plot(record.stein_mat, record.tau, record.diag))
+    ax_score = Axis(fig[1, 2]; xlabel="Epoch", ylabel="Norm", title="Score Norm")
+    lines!(ax_score, epochs, history[:score_norm]; color=STYLE_ACCENT, label="score norm")
+    axislegend(ax_score; position=:rt)
+
+    ax_param = Axis(fig[1, 3]; xlabel="Epoch", ylabel="Norm", title="Parameter Norm")
+    lines!(ax_param, epochs, history[:param_norm]; color=STYLE_HIGHLIGHT, label="param norm")
+    axislegend(ax_param; position=:rt)
+
+    metrics_panel!(fig[1, 4], eval_records)
+    text_panel!(fig[1, 5], summary_lines(params, sampler, history, eval_records);
+        title="Diagnostic Summary", fontsize=14, titlefontsize=18)
+
+    for (idx, record) in enumerate(eval_records)
+        row = 1 + idx
+        univariate_pair_panel!(fig[row, 1], record.observed_pairs, record.generated_pairs,
+            1, 3, params.pdf_bins, record.tau, "x₀", "xₜ")
+        univariate_pair_panel!(fig[row, 2], record.observed_pairs, record.generated_pairs,
+            2, 4, params.pdf_bins, record.tau, "y₀", "yₜ")
+        contour_pair_panel!(fig[row, 3], record.observed_xpair, record.generated_xpair,
+            record.tau, "x₀", "xₜ", @sprintf("(x₀, xₜ)  KL=%.2e", record.diag.kl_xpair))
+        contour_pair_panel!(fig[row, 4], record.observed_ypair, record.generated_ypair,
+            record.tau, "y₀", "yₜ", @sprintf("(y₀, yₜ)  KL=%.2e", record.diag.kl_ypair))
+        stein_panel!(fig[row, 5], record.stein_mat, record.tau, record.diag)
     end
 
-    nrows = 1 + length(eval_records)
-    fig = plot(plots...; layout=(nrows, 5), size=(2600, 450 * nrows), margin=5Plots.mm)
-    savefig(fig, output_path)
+    save_figure(output_path, fig)
     return nothing
 end
 

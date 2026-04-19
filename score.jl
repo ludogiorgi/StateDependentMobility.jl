@@ -21,7 +21,7 @@ function ensure_packages(packages::Vector{String})
 end
 
 ENV["GKSwstype"] = get(ENV, "GKSwstype", "100")
-ensure_packages(["Flux", "BSON", "HDF5", "Plots", "CUDA", "ProgressMeter", "KernelDensity"])
+ensure_packages(["Flux", "BSON", "HDF5", "GLMakie", "CUDA", "ProgressMeter", "KernelDensity"])
 
 using BSON
 using CUDA
@@ -29,15 +29,13 @@ using Flux
 using HDF5
 using KernelDensity
 using LinearAlgebra
-using Plots
 using Printf
 using ProgressMeter
 using Random
 using Statistics
 using TOML
 
-gr()
-default(fontfamily="DejaVu Sans", lw=2, size=(1800, 1200), dpi=180)
+include(joinpath(@__DIR__, "src", "figure_style.jl"))
 
 const DEFAULT_PARAM_FILE = joinpath(@__DIR__, "score.toml")
 
@@ -463,15 +461,14 @@ function compute_pdf_diagnostics(observed_pdf::ObservedPDFReference, gen_samples
     )
 end
 
-function summary_panel(params::ScoreTrainingParams, observed_samples::Matrix{Float32}, gen_samples::Matrix{Float32}, stein_mat::Matrix{Float64}, history, pdf_diag::PDFDiagnostics)
+function summary_lines(params::ScoreTrainingParams, observed_samples::Matrix{Float32}, gen_samples::Matrix{Float32}, stein_mat::Matrix{Float64}, history, pdf_diag::PDFDiagnostics)
     data_mean = vec(mean(observed_samples; dims=2))
     gen_mean = vec(mean(gen_samples; dims=2))
     data_var = vec(var(observed_samples; dims=2))
     gen_var = vec(var(gen_samples; dims=2))
     stein_error = norm(stein_mat - Matrix{Float64}(I, 2, 2))
 
-    p = plot(xlim=(0, 1), ylim=(0, 1), axis=false, grid=false, legend=false, background_color=:white, framestyle=:none, title="Summary")
-    lines = [
+    return [
         @sprintf("sigma = %.3f", params.sigma),
         @sprintf("widths = %s", string(params.widths)),
         @sprintf("epochs = %d", params.epochs),
@@ -490,20 +487,10 @@ function summary_panel(params::ScoreTrainingParams, observed_samples::Matrix{Flo
         @sprintf("data var  = [%.3f, %.3f]", data_var[1], data_var[2]),
         @sprintf("gen var   = [%.3f, %.3f]", gen_var[1], gen_var[2]),
     ]
-    y = 0.95
-    for line in lines
-        annotate!(p, 0.03, y, text(line, 10, :left, :black, "DejaVu Sans"))
-        y -= 0.058
-    end
-    return p
-end
-
-function stein_colormap()
-    return cgrad(["#dbe7f0", "#eef3f8", "#f7f7f5", "#f3e8e1", "#dfc6bb"])
 end
 
 function create_diagnostics_figure(params::ScoreTrainingParams, history, stein_mat::Matrix{Float64}, observed_pdf::ObservedPDFReference, gen_samples::Matrix{Float32}, output_path::AbstractString)
-    epochs = 1:length(history[:train_loss])
+    epochs = collect(1:length(history[:train_loss]))
 
     gen_x = Float64.(vec(gen_samples[1, :]))
     gen_y = Float64.(vec(gen_samples[2, :]))
@@ -513,38 +500,72 @@ function create_diagnostics_figure(params::ScoreTrainingParams, history, stein_m
     _, _, dens_gen, _, _ = compute_histogram_2d(gen_x, gen_y, length(observed_pdf.xgrid); x_range=observed_pdf.x_range, y_range=observed_pdf.y_range)
     pdf_diag = compute_pdf_diagnostics(observed_pdf, gen_samples)
 
-    p1 = plot(epochs, history[:train_loss], xlabel="Epoch", ylabel="Loss", yscale=:log10,
-        title="Train DSM Loss", label="train", color=:steelblue)
-    p2 = plot(epochs, history[:score_norm], xlabel="Epoch", ylabel="Norm",
-        title="Train Score Norm", label="score norm", color=:seagreen)
-    p3 = plot(epochs, history[:param_norm], xlabel="Epoch", ylabel="Norm",
-        title="Parameter Norm", label="param norm", color=:darkorange)
+    fig = Figure(; size=(1800, 1250))
+
+    ax1 = Axis(fig[1, 1]; xlabel="Epoch", ylabel="Loss", yscale=log10,
+        title="Training DSM Loss")
+    lines!(ax1, epochs, history[:train_loss]; color=STYLE_PRIMARY, label="train")
+    axislegend(ax1; position=:rt)
+
+    ax2 = Axis(fig[1, 2]; xlabel="Epoch", ylabel="Norm", title="Score Norm")
+    lines!(ax2, epochs, history[:score_norm]; color=STYLE_ACCENT, label="score norm")
+    axislegend(ax2; position=:rt)
+
+    ax3 = Axis(fig[1, 3]; xlabel="Epoch", ylabel="Norm", title="Parameter Norm")
+    lines!(ax3, epochs, history[:param_norm]; color=STYLE_HIGHLIGHT, label="param norm")
+    axislegend(ax3; position=:rt)
 
     clim = max(maximum(abs.(stein_mat)), 1e-6)
-    p4 = heatmap(1:2, 1:2, stein_mat; xlabel="j", ylabel="i", title="Stein Matrix -E[s_i z_j], z=x+sigma*xi",
-        colorbar=true, c=stein_colormap(), clims=(-clim, clim), aspect_ratio=:equal,
-        xticks=(1:2, ["x", "y"]), yticks=(1:2, ["x", "y"]))
+    ax4 = Axis(fig[2, 1]; xlabel="j", ylabel="i",
+        title="Stein matrix  -E[s_i z_j],  z = x + σ·ξ",
+        xticks=(1:2, ["x", "y"]), yticks=(1:2, ["x", "y"]),
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    hm4 = heatmap!(ax4, 1:2, 1:2, stein_mat;
+        colormap=STYLE_DIVERGING_SOFT, colorrange=(-clim, clim))
+    Colorbar(fig[2, 1, Right()], hm4)
     for i in 1:2, j in 1:2
-        annotate!(p4, j, i, text(@sprintf("%.3f", stein_mat[i, j]), 10, :black))
+        text!(ax4, j, i; text=(@sprintf("%.3f", stein_mat[i, j])),
+            align=(:center, :center), color=STYLE_REFERENCE, fontsize=14)
     end
 
-    p5 = plot(observed_pdf.xcenters, observed_pdf.xdensity, xlabel="x", ylabel="PDF", title="Univariate PDF: x",
-        label="data", color=:black)
-    plot!(p5, observed_pdf.xcenters, xdens_gen, label="score SDE", color=:steelblue, linestyle=:dash)
+    ax5 = Axis(fig[2, 2]; xlabel="x", ylabel="density",
+        title="Marginal density p(x)")
+    lines!(ax5, observed_pdf.xcenters, observed_pdf.xdensity;
+        color=STYLE_REFERENCE, label="data")
+    lines!(ax5, observed_pdf.xcenters, xdens_gen;
+        color=STYLE_PRIMARY, linestyle=:dash, label="score SDE")
+    axislegend(ax5; position=:rt)
 
-    p6 = plot(observed_pdf.ycenters, observed_pdf.ydensity, xlabel="y", ylabel="PDF", title="Univariate PDF: y",
-        label="data", color=:black)
-    plot!(p6, observed_pdf.ycenters, ydens_gen, label="score SDE", color=:darkorange, linestyle=:dash)
+    ax6 = Axis(fig[2, 3]; xlabel="y", ylabel="density",
+        title="Marginal density p(y)")
+    lines!(ax6, observed_pdf.ycenters, observed_pdf.ydensity;
+        color=STYLE_REFERENCE, label="data")
+    lines!(ax6, observed_pdf.ycenters, ydens_gen;
+        color=STYLE_SECONDARY, linestyle=:dash, label="score SDE")
+    axislegend(ax6; position=:rt)
 
-    p7 = heatmap(observed_pdf.xgrid, observed_pdf.ygrid, observed_pdf.density2d; xlabel="x", ylabel="y", title="Data Bivariate PDF",
-        colorbar=true, c=:viridis, aspect_ratio=:equal)
-    p8 = heatmap(observed_pdf.xgrid, observed_pdf.ygrid, dens_gen; xlabel="x", ylabel="y", title="Score-SDE Bivariate PDF",
-        colorbar=true, c=:viridis, aspect_ratio=:equal)
+    ax7 = Axis(fig[3, 1]; xlabel="x", ylabel="y",
+        title="Data joint density  p(x,y)",
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    hm7 = heatmap!(ax7, observed_pdf.xgrid, observed_pdf.ygrid, observed_pdf.density2d;
+        colormap=STYLE_SEQUENTIAL)
+    Colorbar(fig[3, 1, Right()], hm7)
 
-    p9 = summary_panel(params, observed_pdf.samples, gen_samples, stein_mat, history, pdf_diag)
+    ax8 = Axis(fig[3, 2]; xlabel="x", ylabel="y",
+        title="Score-SDE joint density  p(x,y)",
+        aspect=DataAspect(),
+        xgridvisible=false, ygridvisible=false)
+    hm8 = heatmap!(ax8, observed_pdf.xgrid, observed_pdf.ygrid, dens_gen;
+        colormap=STYLE_SEQUENTIAL)
+    Colorbar(fig[3, 2, Right()], hm8)
 
-    fig = plot(p1, p2, p3, p4, p5, p6, p7, p8, p9, layout=(3, 3), size=(1800, 1200), margin=6Plots.mm)
-    savefig(fig, output_path)
+    text_panel!(fig[3, 3],
+        summary_lines(params, observed_pdf.samples, gen_samples, stein_mat, history, pdf_diag);
+        title="Diagnostic Summary", fontsize=14, titlefontsize=18)
+
+    save_figure(output_path, fig)
     return nothing
 end
 
