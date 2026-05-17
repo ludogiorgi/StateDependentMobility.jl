@@ -1,0 +1,42 @@
+[data]
+input_hdf5 = "../data/fhd_chain_capillary_n32_short.h5"
+phi_hdf5 = "../data/fhd_chain_capillary_n32_phi_highfreq.h5"
+score_bson = "../models/score_gpu2.bson"
+burnin_fraction = 0.10
+
+[phi]
+estimator = "logcov"
+fit_max_lag = 20
+fit_degree = 2
+use_stein_correction = true
+stein_correction_orientation = "right"
+project_block_circulant = true
+project_symmetric_psd = true
+stein_samples = 0
+true_mobility_samples = 8000
+
+[forward]
+dt = 0.0005
+total_time = 80.0
+burnin_time = 20.0
+save_dt = 0.5
+ntrajectories = 24
+score_clip = 120.0
+
+[run]
+seed = 20260630
+device = "gpu"
+expected_smi_index = 2
+visible_device_id = "0"
+required_gpu_name = "RTX 5070"
+
+[figure]
+width = 3600
+height = 2700
+
+[output]
+artifact_hdf5 = "../data/phi_baseline_artifacts.h5"
+metrics_txt = "../logs/fit_Phi_metrics.txt"
+phi_figure_png = "../figures/phi_recovery.png"
+forward_figure_png = "../figures/phi_forward_comparison.png"
+forward_hdf5 = "../data/phi_forward_trajectories.h5"

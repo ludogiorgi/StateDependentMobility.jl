@@ -1,0 +1,57 @@
+# Forward-only 2080 Ti device variant for the best joint-score vE wide M checkpoint.
+# Same checkpoint/targets as fit_dM_phys_pC_joint_vE_gpu1_wide_neighbor.toml;
+# only the device guard is changed so forward_dM.jl can use a free 2080 Ti.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_phys_pC_sigma02.bson"
+cond_score_kind = "joint_score"
+cond_score_bson = "../models/joint_score_phys_pC_gpu2_vE_physaug_groupnorm.bson"
+cond_score_config = "joint_score_phys_pC_gpu2_vE_physaug_groupnorm.toml"
+phi_artifact_bson = "../models/fit_Phi_phys_pC_dataonly_artifacts.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 0.60
+lag_stride = 1
+
+[targets]
+retained_channels_toml = "../configs/nonlinear_observable_retained_channels_compact.toml"
+target_artifact_bson = "../models/dM_targets_compact_phys_pC_dataonly.bson"
+max_lags = 24
+target_pairs_per_lag = 70000
+target_mean_samples = 180000
+
+[model]
+feature_mode = "neighbor_r2"
+hidden_width = 224
+hidden_depth = 5
+sym_scale = 0.12
+skew_scale = 0.70
+sym_floor = 0.0001
+
+[training]
+epochs = 90
+batches_per_epoch = 112
+batch_pairs = 4096
+cache_pairs_per_lag = 24000
+learning_rate = 0.00042
+weight_decay = 1.0e-6
+mean_penalty_weight = 0.25
+mean_penalty_samples = 4096
+eval_pairs_per_lag = 24000
+eval_every = 5
+first_lag_index = 7
+last_lag_index = 0
+seed = 2026051523
+
+[output]
+model_bson = "../models/dM_phys_pC_joint_vE_gpu1_wide_neighbor.bson"
+metrics_txt = "../logs/dM_phys_pC_joint_vE_gpu1_wide_neighbor_metrics.txt"
+figure_png = "../figures/dM_phys_pC_joint_vE_gpu1_wide_neighbor_diagnostics.png"
+
+[run]
+device = "GPU:0"
+required_gpu_name = "2080ti"
+prepare_targets = false
+train = false
+evaluate = false
+verbose = true

@@ -1,0 +1,56 @@
+# Step 2 stationary score for SoftSpinLLGChain.
+# This trains DSM only at sigma=0.05. Analytic score is diagnostics only.
+# The GPU guard intentionally requires a 2080 Ti and rejects ambiguous GPU selection.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+burnin_fraction = 0.1
+max_samples = 1572864
+
+[model]
+base_channels = 128
+channel_multipliers = [1, 2]
+kernel_size = 5
+periodic = true
+activation = "swish"
+final_activation = "identity"
+normalization = "none"
+output_mode = "score"
+init_seed = 314159
+
+[training]
+sigma = 0.05
+epochs = 160
+batch_size = 8192
+learning_rate = 0.00012
+epoch_subset_size = 393216
+use_lr_schedule = true
+min_lr_factor = 0.08
+seed = 20260508
+
+[figure]
+exact_score_samples = 100000
+width = 3000
+height = 2200
+
+[langevin]
+dt = 0.0005
+total_time = 80.0
+burnin_time = 16.0
+save_dt = 0.04
+ntrajectories = 192
+score_clip = 80.0
+max_pdf_samples = 250000
+
+[output]
+model_bson = "../models/score_sigma005.bson"
+figure_png = "../figures/score_diagnostics.png"
+langevin_hdf5 = "../data/score_langevin.h5"
+langevin_figure_png = "../figures/score_langevin_validation.png"
+
+[run]
+device = "GPU:0"
+required_gpu_name = "2080ti"
+train = true
+evaluate = true
+langevin_validate = true

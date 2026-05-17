@@ -1,21 +1,92 @@
-# Ignore everything by default.
-*
-
-# Keep directory traversal only where needed for Git to evaluate patterns.
-!/
-
-# Never commit generated data and run outputs.
-Data/
-output/
+# Generated experiment artifacts
+**/data/
+**/Data/
+**/models/
+**/figures/
+**/logs/
+**/output/
+**/outputs/
+**/runs/
 runs/
 
-# Keep only the minimal top-level repository files.
-!.gitignore
-!README.md
-!*.jl
-!*.toml
+# Agent scratch space
+.agent-scratch/*
+!.agent-scratch/.gitignore
 
-# Keep source code under src/.
-!src/
-!src/**/*.jl
-!src/**/*.toml
+# Julia local/build artifacts
+.julia/
+*.ji
+*.cov
+*.mem
+*.jl.cov
+*.so
+*.dylib
+*.dll
+
+# Python/editor/cache artifacts
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.ipynb_checkpoints/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.lof
+*.log
+*.lot
+*.out
+*.run.xml
+*.synctex.gz
+*.toc
+*.xdv
+
+# Generated binaries and archives
+*.pdf
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.svg
+*.h5
+*.hdf5
+*.bson
+*.jld2
+*.npy
+*.npz
+*.csv
+*.tsv
+*.zip
+*.tar
+*.tar.gz
+
+# Keep source-controlled documentation assets where explicitly wanted.
+!README.md
+!AGENTS.md
+!docs/**/*.md
+!**/reports/**/*.md
+!**/writeup/**/*.tex
+
+# Keep source/configuration files.
+!**/*.jl
+!**/*.toml
+!**/*.bib
+!**/*.tex
+!**/*.md
+
+# Local prompt scratch notes are not repository documentation.
+prompts.md
+
+# Local dependency checkout; add as a real submodule only if intentionally needed.
+ScoreUNet1D.jl/

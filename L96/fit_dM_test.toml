@@ -1,0 +1,95 @@
+# julia --project=. --threads 36 L96/fit_dM_test.jl L96/fit_dM_test.toml
+
+[run]
+label = "l96_phi_only_score_validation"
+device = "AUTO"
+seed = 20260429
+mode = "phi_cdot0_test"
+
+[data]
+input_hdf5 = "outputs/l96_correlated_noise.h5"
+plain_score_bson = "outputs/score.bson"
+joint_score_bson = "outputs/joint_score.bson"
+burnin_fraction = 0.2
+
+[cdot]
+lag_stride = 1
+pairs_per_tau = 60000
+eval_batch_size = 4096
+max_tau = 2.5
+stein_samples = 60000
+stein_ridge = 1.0e-6
+
+[mobility]
+antisymmetric_scale = 1.0
+
+[forward_validation]
+dt = 0.001
+save_stride = 20
+total_time = 8.0
+burnin_time = 2.0
+ntrajectories = 64
+seed = 20260531
+score_batch_size = 8192
+use_observed_initial_conditions = true
+use_common_random_numbers = true
+clamp_eval_to_support = false
+hard_clamp_state = false
+support_pad_fraction = 0.10
+pdf_bins = 160
+pdf_max_samples = 400000
+correlation_max_time = 8.0
+correlation_threshold = 0.05
+cross_offsets = [1, 2, 5, 10]
+
+[mobility_nn]
+enabled = true
+offsets = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20]
+factor_offsets = [0, 1, 2]
+window_offsets = [-20, -15, -12, -10, -8, -7, -6, -5, -4, -3, -2, -1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 15, 20]
+coordinate_separations = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 12, 15, 20]
+quadratic_offsets = [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 15]
+cubic_offsets = [0, 1, 2, 3, 4, 5, 6, 8]
+quartic_offsets = []
+l96_channels = []
+select_channels = true
+selection_min_channels = 6
+selection_max_channels = 12
+selection_min_amplitude_fraction = 0.10
+selection_max_noise_ratio = 0.55
+selection_max_roughness_ratio = 1.20
+selection_mandatory_channels = ["u[r=0]", "u[r=1]", "u[r=2]", "u[r=3]", "u[r=4]", "u[r=5]"]
+pairs_per_tau = 8192
+tau_batch_size = 4
+anchor_states = 8192
+epochs = 1800
+min_epochs = 500
+eval_every = 25
+plateau_patience = 200
+plateau_rtol = 1.0e-3
+learning_rate = 8.0e-4
+lag_weight_power = 0.0
+zero_mean_penalty = 1.0e-2
+zero_mean_penalty_final_scale = 10.0
+anchor_rms_penalty = 2.0e-2
+current_action_penalty = 5.0e-3
+current_action_samples = 8192
+current_action_batch_size = 1024
+factor_rms_penalty = 0.0
+skew_rms_penalty = 0.0
+weight_decay = 1.0e-6
+scale_floor = 1.0e-4
+forward_scale = 1.0
+psd_jitter = 1.0e-8
+validation_pair_seeds = [20260511, 20260512]
+widths = [160, 160]
+
+[output]
+output_dir = "outputs/fit_dM_test"
+figure_png = "forward_validation_stats.png"
+diagnostics_bson = "fit_dM_test_diagnostics.bson"
+metrics_txt = "fit_dM_test_metrics.txt"
+
+[figure]
+width = 3000
+height = 2200

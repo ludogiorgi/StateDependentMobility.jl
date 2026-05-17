@@ -1,0 +1,331 @@
+# Compact retained nonlinear observable channels.
+# Generated from nonlinear_observable_retained_channels_merged.toml: top 12 per target component.
+# True M was used only in the upstream ex-post observable filtering, not in M training targets.
+corr_min = 0.9
+rel_rmse_max = 0.5
+signal_fraction_min = 0.05
+translation_offsets = "all"
+
+[[channels]]
+observable = "mz_gradm_my"
+target_component = "mx"
+rel_rmse = 0.119181352
+corr = 0.99295249
+data_rms = 0.0617505523
+signal_fraction = 0.286409318
+source = "nonlinear_observable_retained_channels_all.toml"
+
+[[channels]]
+observable = "mz_lap_my"
+target_component = "mx"
+rel_rmse = 0.119892102
+corr = 0.99290245
+data_rms = 0.106687747
+signal_fraction = 0.49483549
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "cross_m_x"
+target_component = "mx"
+rel_rmse = 0.12071025
+corr = 0.9934308
+data_rms = 0.07523185
+signal_fraction = 0.348937816
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "cross_p_x"
+target_component = "mx"
+rel_rmse = 0.12071025
+corr = 0.9934308
+data_rms = 0.07523185
+signal_fraction = 0.348937816
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_r4"
+target_component = "mx"
+rel_rmse = 0.123305171
+corr = 0.99239976
+data_rms = 0.0811223844
+signal_fraction = 0.54172526
+source = "nonlinear_observable_retained_channels_poly_high.toml"
+
+[[channels]]
+observable = "mz_gradp_my"
+target_component = "mx"
+rel_rmse = 0.123555114
+corr = 0.99242319
+data_rms = 0.0616723675
+signal_fraction = 0.286046684
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_r2"
+target_component = "mx"
+rel_rmse = 0.124012308
+corr = 0.99238937
+data_rms = 0.0747943722
+signal_fraction = 0.346908721
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_mx2"
+target_component = "mx"
+rel_rmse = 0.126589019
+corr = 0.99204045
+data_rms = 0.0354744371
+signal_fraction = 0.164536331
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_neighbor_r2sum"
+target_component = "mx"
+rel_rmse = 0.12792082
+corr = 0.99214897
+data_rms = 0.145718575
+signal_fraction = 0.675866956
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_r2_nnavg"
+target_component = "mx"
+rel_rmse = 0.12792082
+corr = 0.99214897
+data_rms = 0.0728592877
+signal_fraction = 0.337933478
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_r2_mperp2"
+target_component = "mx"
+rel_rmse = 0.12804157
+corr = 0.9917724
+data_rms = 0.050716732
+signal_fraction = 0.33868007
+source = "nonlinear_observable_retained_channels_poly_high.toml"
+
+[[channels]]
+observable = "mx_mperp2"
+target_component = "mx"
+rel_rmse = 0.128349035
+corr = 0.99176953
+data_rms = 0.0471396474
+signal_fraction = 0.218641514
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_r2_mperp2"
+target_component = "my"
+rel_rmse = 0.114078832
+corr = 0.99348158
+data_rms = 0.050557347
+signal_fraction = 0.337615717
+source = "nonlinear_observable_retained_channels_poly_high.toml"
+
+[[channels]]
+observable = "my_mperp2"
+target_component = "my"
+rel_rmse = 0.115760001
+corr = 0.99327781
+data_rms = 0.0470082248
+signal_fraction = 0.218031954
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_r4"
+target_component = "my"
+rel_rmse = 0.115995177
+corr = 0.99346049
+data_rms = 0.080971932
+signal_fraction = 0.540720558
+source = "nonlinear_observable_retained_channels_poly_high.toml"
+
+[[channels]]
+observable = "my_r2"
+target_component = "my"
+rel_rmse = 0.11779691
+corr = 0.9933348
+data_rms = 0.0746931556
+signal_fraction = 0.346439262
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_twist2"
+target_component = "my"
+rel_rmse = 0.118103427
+corr = 0.99304195
+data_rms = 0.0882133996
+signal_fraction = 0.409148399
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_mperp4"
+target_component = "my"
+rel_rmse = 0.12062029
+corr = 0.99288419
+data_rms = 0.0376666992
+signal_fraction = 0.251533563
+source = "nonlinear_observable_retained_channels_poly_high.toml"
+
+[[channels]]
+observable = "my_my2"
+target_component = "my"
+rel_rmse = 0.121529427
+corr = 0.99259237
+data_rms = 0.0352632494
+signal_fraction = 0.163556808
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_grad2"
+target_component = "my"
+rel_rmse = 0.123814962
+corr = 0.99246957
+data_rms = 0.149663547
+signal_fraction = 0.999434678
+source = "nonlinear_observable_retained_channels.toml"
+
+[[channels]]
+observable = "my_mx2"
+target_component = "my"
+rel_rmse = 0.123862866
+corr = 0.99229975
+data_rms = 0.0117584356
+signal_fraction = 0.0545375775
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_lap2"
+target_component = "my"
+rel_rmse = 0.125221478
+corr = 0.99214397
+data_rms = 0.215548441
+signal_fraction = 0.999749471
+source = "nonlinear_observable_retained_channels_all.toml"
+
+[[channels]]
+observable = "my_neighbor_r2sum"
+target_component = "my"
+rel_rmse = 0.126899547
+corr = 0.99250896
+data_rms = 0.145635488
+signal_fraction = 0.675481582
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_r2_nnavg"
+target_component = "my"
+rel_rmse = 0.126899547
+corr = 0.99250896
+data_rms = 0.072817744
+signal_fraction = 0.337740791
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "my_mx_nnavg"
+target_component = "mz"
+rel_rmse = 0.211127537
+corr = 0.97764991
+data_rms = 0.0138841429
+signal_fraction = 0.0643969609
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "cross_p_z"
+target_component = "mz"
+rel_rmse = 0.224674196
+corr = 0.9763785
+data_rms = 0.0326603043
+signal_fraction = 0.218101477
+source = "nonlinear_observable_retained_channels.toml"
+
+[[channels]]
+observable = "cross_m_z"
+target_component = "mz"
+rel_rmse = 0.224674196
+corr = 0.9763785
+data_rms = 0.0326603043
+signal_fraction = 0.151483916
+source = "nonlinear_observable_retained_channels_all.toml"
+
+[[channels]]
+observable = "mz_lap2"
+target_component = "mz"
+rel_rmse = 0.224859391
+corr = 0.97518475
+data_rms = 0.149033488
+signal_fraction = 0.691242069
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_cross_m_my"
+target_component = "mz"
+rel_rmse = 0.228732537
+corr = 0.97349957
+data_rms = 0.0149441401
+signal_fraction = 0.0693134036
+source = "nonlinear_observable_retained_channels_all.toml"
+
+[[channels]]
+observable = "mz_grad2"
+target_component = "mz"
+rel_rmse = 0.230876454
+corr = 0.97343627
+data_rms = 0.106486614
+signal_fraction = 0.4939026
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_my_nnavg"
+target_component = "mz"
+rel_rmse = 0.240565822
+corr = 0.97370067
+data_rms = 0.0138882447
+signal_fraction = 0.0644159854
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_lap_my"
+target_component = "mz"
+rel_rmse = 0.241316632
+corr = 0.97246884
+data_rms = 0.027845698
+signal_fraction = 0.129152972
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_gradm_my"
+target_component = "mz"
+rel_rmse = 0.244686585
+corr = 0.97188008
+data_rms = 0.0163277142
+signal_fraction = 0.0757306501
+source = "nonlinear_observable_retained_channels_all.toml"
+
+[[channels]]
+observable = "my_cross_p_x"
+target_component = "mz"
+rel_rmse = 0.251846154
+corr = 0.96826191
+data_rms = 0.0149759555
+signal_fraction = 0.10000758
+source = "nonlinear_observable_retained_channels.toml"
+
+[[channels]]
+observable = "mx_cross_p_y"
+target_component = "mz"
+rel_rmse = 0.252289576
+corr = 0.96827438
+data_rms = 0.01496687
+signal_fraction = 0.0694188289
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"
+
+[[channels]]
+observable = "mx_my_p"
+target_component = "mz"
+rel_rmse = 0.252746096
+corr = 0.9707404
+data_rms = 0.0163730413
+signal_fraction = 0.0759408849
+source = "nonlinear_observable_retained_channels_neighbor_high.toml"

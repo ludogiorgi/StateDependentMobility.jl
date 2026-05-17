@@ -1,0 +1,68 @@
+# Data-only Phi recovery and constant-Phi forward validation for FHDChainN16.
+# No conditional score and no mobility NN are used in this benchmark.
+
+[data]
+input_hdf5 = "../data/fhd_chain_n16.h5"
+score_bson = "../models/score_sigma0025.bson"
+burnin_fraction = 0.1
+tau_min = 0.0
+tau_max_decorrelation_multiples = 0.67
+lag_stride = 1
+
+[evaluation]
+max_fit_lags = 40
+pairs_per_lag_phi = 180000
+pairs_per_lag_cdot = 180000
+phi_fit_max_lag = 5
+phi_fit_degree = 3
+phi_include_zero_lag = true
+phi_zero_lag_samples = 300000
+phi_use_stein_correction = false
+phi_project_symmetric_psd = true
+phi_projection = "fhd_mean_stencil"
+stein_samples = 150000
+true_mobility_samples = 50000
+score_batch_size = 4096
+
+[mobility]
+train = false
+pairs_per_lag = 512
+epochs = 0
+learning_rate = 0.001
+mean_penalty = 0.01
+weight_decay = 0.0000001
+profile_batch_size = 512
+hidden_width = 128
+cache_bson = "outputs/fit_dM_mobility_cache.bson"
+
+[forward]
+run = true
+dt = 0.001
+total_time = 220.0
+burnin_time = 40.0
+save_dt = 0.0
+ntrajectories = 72
+score_clip = 160.0
+
+[figure]
+n_plot_panels = 16
+width = 3600
+height = 3000
+
+[output]
+artifact_bson = "../models/fit_Phi_artifacts.bson"
+metrics_txt = "../logs/fit_Phi_metrics.txt"
+cdot_figure_png = "../figures/phi_cdot_gfdt.png"
+phi_figure_png = "../figures/phi_recovery.png"
+mobility_training_png = "../figures/unused_mobility_training.png"
+mobility_comparison_png = "../figures/unused_mobility_comparison.png"
+forward_stats_png = "../figures/phi_forward_stats.png"
+forward_cmn_png = "../figures/phi_forward_cmn.png"
+forward_hdf5 = "../data/phi_forward_langevin.h5"
+mobility_bson = "../models/unused_mobility_nn.bson"
+
+[run]
+device = "GPU:1"
+required_gpu_name = "5070"
+seed = 20260622
+verbose = true

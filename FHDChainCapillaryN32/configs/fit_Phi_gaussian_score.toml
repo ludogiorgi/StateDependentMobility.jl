@@ -1,0 +1,26 @@
+[data]
+input_hdf5 = "../data/fhd_chain_capillary_n32_short.h5"
+covariance_hdf5 = "../data/fhd_chain_capillary_n32_phi_burstfine4k.h5"
+score_bson = "../models/score_gpu2.bson"
+phi_hdf5 = "../data/phi_dataonly_burstfine4k_sweep.h5"
+reference_forward_hdf5 = "../data/phi_improved_forward_trajectories.h5"
+burnin_fraction = 0.10
+covariance_burnin_fraction = 0.00
+
+[score]
+ridge_relative = 1.0e-8
+
+[forward]
+dt = 0.0005
+total_time = 80.0
+burnin_time = 20.0
+save_dt = 0.5
+ntrajectories = 2048
+
+[run]
+seed = 20260820
+
+[output]
+metrics_txt = "../logs/fit_Phi_gaussian_score_metrics.txt"
+figure_png = "../figures/phi_gaussian_score_forward_comparison.png"
+forward_hdf5 = "../data/phi_gaussian_score_forward_trajectories.h5"

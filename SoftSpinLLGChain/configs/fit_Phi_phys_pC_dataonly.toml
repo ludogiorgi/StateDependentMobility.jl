@@ -1,0 +1,55 @@
+# Strict trajectory-only Phi for the physical-feature stationary score branch.
+# This disables the short-lag resimulation path; Phi_raw comes only from saved
+# trajectory correlations and zero-lag covariance samples.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_phys_pC_sigma02.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 1.0
+lag_stride = 1
+
+[evaluation]
+max_fit_lags = 60
+pairs_per_lag_phi = 240000
+pairs_per_lag_cdot = 120000
+phi_fit_max_lag = 3
+phi_fit_degree = 2
+phi_include_zero_lag = true
+phi_zero_lag_samples = 300000
+score_batch_size = 4096
+true_mobility_samples = 60000
+
+[phi_shortlag]
+run = false
+samples = 0
+dt = 0.00025
+save_steps = [0, 4, 8, 12]
+
+[forward]
+run = true
+dt = 0.003
+total_time = 180.0
+burnin_time = 30.0
+save_dt = 0.04
+ntrajectories = 72
+score_clip = 120.0
+
+[figure]
+width = 3600
+height = 3000
+
+[output]
+artifact_bson = "../models/fit_Phi_phys_pC_dataonly_artifacts.bson"
+metrics_txt = "../logs/fit_Phi_phys_pC_dataonly_metrics.txt"
+cdot_figure_png = "../figures/phi_phys_pC_dataonly_cdot_gfdt.png"
+phi_figure_png = "../figures/phi_phys_pC_dataonly_recovery.png"
+forward_stats_png = "../figures/phi_phys_pC_dataonly_forward_stats.png"
+forward_cmn_png = "../figures/phi_phys_pC_dataonly_forward_cmn.png"
+forward_hdf5 = "../data/phi_phys_pC_dataonly_forward_langevin.h5"
+
+[run]
+device = "GPU:1"
+required_gpu_name = "2080ti"
+seed = 20260513
+verbose = true

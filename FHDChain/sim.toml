@@ -1,0 +1,72 @@
+# Parameters for FHDChain/sim.jl.
+# Run from the repository root, for example:
+#   julia --project=. --threads 36 FHDChain/sim.jl FHDChain/sim.toml
+
+[simulation]
+N = 8
+L = 6.283185307179586
+rho0 = 1.0
+sound_speed = 0.6
+Theta = 0.04
+eta0 = 0.08
+zeta = 3.0
+
+t0 = 0.0
+dt = 0.0025
+ntrajectories = 72
+requested_threads = 36
+seed = 20260521
+
+# Match the previous ComplexAmplitudeChain resolution: 100 saved snapshots
+# inside each decorrelation-time window, up to the integer dt grid.
+production_snapshots_per_decorrelation = 100
+max_substep_depth = 12
+density_floor = 0.0
+density_log_step_limit = 0.25
+velocity_density_floor = 0.05
+
+[initial_condition]
+rho_perturb_amplitude = 0.01
+momentum_perturb_amplitude = 0.005
+
+[reference_previous]
+# Used only to match the previous ComplexAmplitudeChain sampling budget.
+hdf5_file = "../ComplexAmplitudeChain/outputs/complex_amplitude_chain.h5"
+fallback_uncorrelated_count = 2777.78
+fallback_snapshots_per_decorrelation = 100.0
+fallback_ntrajectories = 72
+
+[calibration]
+pilot_t1 = 500.0
+pilot_save_dt = 0.05
+pilot_burnin_fraction = 0.25
+pilot_correlation_stride = 2
+pilot_max_decorrelation_time = 200.0
+decorrelation_threshold = 0.05
+
+[statistics]
+burnin_fraction = 0.1
+histogram_bins = 160
+correlation_stride = 2
+max_correlation_lags = 500
+cross_offsets = [1, 2, 4]
+bivariate_offsets = [1, 4]
+max_pdf_samples = 500000
+
+[figure]
+width = 2600
+height = 2200
+dynamics_width = 2500
+dynamics_height = 1900
+trajectories_width = 2500
+trajectories_height = 1900
+dynamics_window_decorrelation_times = 20.0
+dynamics_trajectory = 1
+dynamics_max_frames = 2500
+dynamics_trace_sites = [1, 3, 5, 7]
+
+[output]
+hdf5_file = "outputs/fhd_chain.h5"
+figure_png = "outputs/fhd_chain_summary.png"
+dynamics_figure_png = "outputs/fhd_chain_dynamics.png"
+trajectories_figure_png = "outputs/fhd_chain_trajectories.png"

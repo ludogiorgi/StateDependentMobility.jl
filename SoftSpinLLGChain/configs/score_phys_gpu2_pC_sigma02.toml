@@ -1,0 +1,17 @@
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+burnin_fraction = 0.1
+max_samples = 4194304
+spin_inversion_augment = true
+enforce_zero_mean = true
+
+[training]
+sigma = 0.02
+noise_repeats = 8
+batch_size = 65536
+ridge = 1.0e-8
+seed = 2026051303
+
+[output]
+model_bson = "../models/score_phys_pC_sigma02.bson"
+metrics_txt = "../logs/score_phys_pC_sigma02_fit_metrics.txt"

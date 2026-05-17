@@ -1,0 +1,62 @@
+# julia --project=. --threads 36 L96/joint_score.jl L96/joint_score.toml
+# nohup julia --project=. --threads 36 L96/joint_score.jl L96/joint_score.toml > L96/outputs/joint_score.log 2>&1 &
+
+[data]
+input_hdf5 = "outputs/l96_correlated_noise.h5"
+burnin_fraction = 0.2
+tau_min = 0.1
+tau_max_decorrelation_multiples = 3.0
+lag_stride = 1
+max_eval_pairs = 120000
+shared_normalization = true
+
+[model]
+in_channels = 3
+base_channels = 32
+channel_multipliers = [1, 2, 4]
+kernel_size = 5
+periodic = true
+activation = "swish"
+final_activation = "identity"
+init_seed = 314159
+
+[training]
+# DSM noise scale used to corrupt training pairs when constructing the joint-score target.
+sigma = 0.1
+epochs = 40
+batches_per_epoch = 512
+batch_size = 2048
+learning_rate = 0.0003
+progress = true
+seed = 20260427
+accumulation_steps = 1
+use_lr_schedule = true
+warmup_steps = 200
+min_lr_factor = 0.1
+
+[sampling]
+dt = 0.001
+steps = 20000
+burnin_steps = 4000
+save_stride = 20
+sample_dt = 0.02
+chains = 256
+seed = 20260429
+progress = true
+
+[figure]
+eval_tau_count = 4
+pair_offsets = [0, 1, 5]
+pdf_bins = 100
+max_pdf_samples = 250000
+stein_samples = 6000
+width = 3400
+height = 3200
+
+[output]
+model_bson = "outputs/joint_score.bson"
+figure_png = "outputs/joint_score_diagnostics.png"
+
+[run]
+device = "GPU:0"
+verbose = true

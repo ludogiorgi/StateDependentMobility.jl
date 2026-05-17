@@ -1,0 +1,56 @@
+# Warm-start the previous best local M from vD, but train/evaluate with the
+# improved continued conditional score.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_phys_pC_sigma02.bson"
+cond_score_bson = "../models/cond_score_phys_pC_unet_vA_cont.bson"
+cond_score_config = "cond_score_phys_pC_unet_gpu2_vA_cont.toml"
+phi_artifact_bson = "../models/fit_Phi_phys_pC_dataonly_artifacts.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 0.60
+lag_stride = 1
+
+[targets]
+retained_channels_toml = "../configs/nonlinear_observable_retained_channels_compact.toml"
+target_artifact_bson = "../models/dM_targets_compact_phys_pC_dataonly.bson"
+max_lags = 24
+target_pairs_per_lag = 70000
+target_mean_samples = 180000
+
+[model]
+feature_mode = "neighbor_r2"
+hidden_width = 176
+hidden_depth = 4
+sym_scale = 0.12
+skew_scale = 0.70
+sym_floor = 0.0001
+init_bson = "../models/dM_phys_pC_dataonly_unet_vA_gpu2_vD_best.bson"
+
+[training]
+epochs = 60
+batches_per_epoch = 112
+batch_pairs = 4096
+cache_pairs_per_lag = 16000
+learning_rate = 0.00022
+weight_decay = 1.0e-6
+mean_penalty_weight = 0.25
+mean_penalty_samples = 4096
+eval_pairs_per_lag = 16000
+eval_every = 5
+first_lag_index = 7
+last_lag_index = 0
+seed = 2026051372
+
+[output]
+model_bson = "../models/dM_phys_pC_dataonly_unet_vAcont_gpu0_vK_cached_warm.bson"
+metrics_txt = "../logs/dM_phys_pC_dataonly_unet_vAcont_gpu0_vK_cached_warm_metrics.txt"
+figure_png = "../figures/dM_phys_pC_dataonly_unet_vAcont_gpu0_vK_cached_warm_diagnostics.png"
+
+[run]
+device = "GPU:0"
+required_gpu_name = "2080ti"
+prepare_targets = false
+train = true
+evaluate = true
+verbose = true

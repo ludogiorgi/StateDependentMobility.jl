@@ -1,0 +1,68 @@
+# Data-only Phi recovery and learned conditional-score Cdot diagnostics.
+# Stops before mobility NN training and before forward Langevin validation.
+
+[data]
+input_hdf5 = "outputs/fhd_chain.h5"
+score_bson = "outputs/score_sigma005.bson"
+cond_score_bson = "outputs/cond_score_residual_sigma005.bson"
+burnin_fraction = 0.1
+tau_min = 0.0
+tau_max_decorrelation_multiples = 0.67
+lag_stride = 1
+
+[evaluation]
+max_fit_lags = 40
+pairs_per_lag_phi = 100000
+pairs_per_lag_cdot = 120000
+phi_fit_max_lag = 5
+phi_fit_degree = 3
+phi_include_zero_lag = true
+phi_zero_lag_samples = 200000
+phi_use_stein_correction = false
+phi_project_symmetric_psd = true
+stein_samples = 150000
+true_mobility_samples = 30000
+score_batch_size = 4096
+
+[mobility]
+train = true
+pairs_per_lag = 512
+epochs = 0
+learning_rate = 0.001
+mean_penalty = 0.01
+weight_decay = 0.0000001
+profile_batch_size = 512
+hidden_width = 128
+cache_bson = "outputs/fit_dM_mobility_cache.bson"
+
+[forward]
+run = true
+dt = 0.008
+total_time = 14.5
+burnin_time = 3.625
+save_dt = 0.3625
+ntrajectories = 12
+score_clip = 80.0
+
+[figure]
+n_plot_panels = 16
+width = 3600
+height = 3000
+
+[output]
+artifact_bson = "outputs/fit_dM_artifacts.bson"
+metrics_txt = "outputs/fit_dM_metrics.txt"
+cdot_figure_png = "outputs/fit_dM_cdot_trueM.png"
+phi_figure_png = "outputs/fit_dM_phi_recovery.png"
+mobility_training_png = "outputs/fit_dM_mobility_training.png"
+mobility_comparison_png = "outputs/fit_dM_mobility_comparison.png"
+forward_stats_png = "outputs/fit_dM_forward_validation_stats.png"
+forward_cmn_png = "outputs/fit_dM_forward_validation_cmn.png"
+forward_hdf5 = "outputs/fit_dM_forward_trajectories.h5"
+mobility_bson = "outputs/fit_dM_mobility_nn.bson"
+
+[run]
+device = "GPU:1"
+required_gpu_name = "5070"
+seed = 20260622
+verbose = true

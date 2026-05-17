@@ -1,0 +1,78 @@
+# Parameters for FHDChainCapillaryN32/code/sim.jl.
+# Run from the repository root, for example:
+#   julia --project=. --threads 16 FHDChainCapillaryN32/code/sim.jl FHDChainCapillaryN32/configs/sim.toml
+
+[simulation]
+N = 32
+L = 6.283185307179586
+rho0 = 1.0
+sound_speed = 1.0
+Theta = 0.005
+eta0 = 0.08
+zeta = 0.5
+# Physically motivated capillary strength. The code computes
+# kappa = (density_correlation_length_dx * dx)^2 * c_s^2 / rho0.
+# With N=32 and c_s=1, xi=4dx gives kappa = 0.616850275068.
+density_correlation_length_dx = 4.0
+
+t0 = 0.0
+dt = 0.00005
+ntrajectories = 16
+requested_threads = 16
+seed = 20260716
+
+# Short validation run: 100 saved snapshots inside each pilot decorrelation-time
+# window, then about six decorrelation times of production.
+production_snapshots_per_decorrelation = 100
+max_substep_depth = 20
+density_floor = 0.0
+density_log_step_limit = 0.15
+velocity_density_floor = 0.02
+
+[initial_condition]
+rho_perturb_amplitude = 0.01
+momentum_perturb_amplitude = 0.005
+
+[reference_previous]
+# Use fallback values intentionally: this is a short physical validation run,
+# not the full long-run benchmark dataset.
+hdf5_file = "../data/missing_short_reference.h5"
+fallback_uncorrelated_count = 6.0
+fallback_snapshots_per_decorrelation = 100.0
+fallback_ntrajectories = 16
+
+[calibration]
+pilot_t1 = 80.0
+pilot_save_dt = 0.02
+pilot_burnin_fraction = 0.25
+pilot_correlation_stride = 1
+pilot_max_decorrelation_time = 50.0
+decorrelation_threshold = 0.05
+
+[statistics]
+burnin_fraction = 0.1
+histogram_bins = 160
+correlation_stride = 1
+max_correlation_lags = 600
+cross_offsets = [1, 2, 4, 8]
+bivariate_offsets = [1, 2, 4, 8]
+max_pdf_samples = 300000
+
+[figure]
+width = 2600
+height = 2200
+dynamics_width = 2500
+dynamics_height = 1900
+trajectories_width = 2500
+trajectories_height = 1900
+dynamics_window_decorrelation_times = 5.0
+dynamics_trajectory = 1
+dynamics_max_frames = 2000
+dynamics_trace_sites = [1, 9, 17, 25]
+
+[output]
+hdf5_file = "../data/fhd_chain_capillary_n32_short.h5"
+figure_png = "../figures/sim_summary.png"
+dynamics_figure_png = "../figures/sim_dynamics.png"
+trajectories_figure_png = "../figures/sim_trajectories.png"
+structure_factor_figure_png = "../figures/static_structure_factor.png"

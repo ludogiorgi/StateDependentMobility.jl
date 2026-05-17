@@ -1,0 +1,22 @@
+[data]
+input_hdf5 = "../data/fhd_chain_capillary_n32_short.h5"
+score_bson = "../models/score_gpu2.bson"
+burnin_fraction = 0.10
+
+[phi]
+# The original dataset has save_dt = 0.5 and 100 snapshots per pilot
+# decorrelation time.  These lags therefore test finite-lag extrapolation from
+# the original cadence only; no high-frequency continuation or burst data are
+# used by this experiment.
+fit_lags = [1, 2, 3, 4, 5, 8, 10, 12, 16, 20, 30, 40]
+validation_lags = [1, 2, 3, 4, 5, 8, 10, 12, 16, 20, 30, 40, 60, 80]
+polynomial_degrees = [1, 2, 3, 4, 5, 6, 7, 8]
+true_mobility_samples = 12000
+
+[run]
+seed = 20260770
+
+[output]
+hdf5_file = "../data/phi_coarse_original_sweep.h5"
+metrics_txt = "../logs/fit_Phi_coarse_metrics.txt"
+figure_png = "../figures/phi_coarse_original_sweep.png"

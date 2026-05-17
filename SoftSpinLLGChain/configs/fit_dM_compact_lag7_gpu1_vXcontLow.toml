@@ -1,0 +1,55 @@
+# Warm-start continuation of the accepted compact lag-7 mobility NN.
+# Lower mean-Phi penalty tests whether a stronger state-dependent correction
+# improves the selected finite-lag operator while starting from the accepted fit.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_sigma005.bson"
+cond_score_bson = "../models/cond_score_residual_gpu0_vA.bson"
+phi_artifact_bson = "../models/fit_Phi_artifacts.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 0.60
+lag_stride = 1
+
+[targets]
+retained_channels_toml = "../configs/nonlinear_observable_retained_channels_compact.toml"
+target_artifact_bson = "../models/dM_targets_compact.bson"
+max_lags = 24
+target_pairs_per_lag = 60000
+target_mean_samples = 160000
+
+[model]
+feature_mode = "neighbor"
+hidden_width = 128
+hidden_depth = 4
+sym_scale = 0.12
+skew_scale = 1.0
+sym_floor = 0.0001
+init_bson = "../models/dM_nn_compact_lag7_gpu2_vX.bson"
+
+[training]
+epochs = 50
+batches_per_epoch = 128
+batch_pairs = 4096
+learning_rate = 0.00025
+weight_decay = 1.0e-6
+mean_penalty_weight = 0.08
+mean_penalty_samples = 4096
+eval_pairs_per_lag = 16000
+eval_every = 10
+first_lag_index = 7
+last_lag_index = 0
+seed = 2026051306
+
+[output]
+model_bson = "../models/dM_nn_compact_lag7_gpu1_vXcontLow.bson"
+metrics_txt = "../logs/dM_nn_compact_lag7_gpu1_vXcontLow_metrics.txt"
+figure_png = "../figures/dM_nn_compact_lag7_gpu1_vXcontLow_diagnostics.png"
+
+[run]
+device = "GPU:1"
+required_gpu_name = "2080ti"
+prepare_targets = false
+train = true
+evaluate = true
+verbose = true

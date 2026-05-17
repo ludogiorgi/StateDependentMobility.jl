@@ -1,0 +1,59 @@
+# Step 3 reverse conditional transition-score residual for SoftSpinLLGChain.
+# Trains DSM on x0 only. The conditioning state xt is kept clean.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_sigma005.bson"
+phi_artifact_bson = "../models/fit_Phi_artifacts.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 0.60
+lag_stride = 1
+
+[model]
+base_channels = 128
+channel_multipliers = [1, 2]
+kernel_size = 5
+periodic = true
+activation = "swish"
+final_activation = "identity"
+normalization = "none"
+include_delta_input = true
+time_fourier_frequencies = 8
+init_seed = 20260510
+
+[training]
+sigma = 0.05
+epochs = 120
+batches_per_epoch = 256
+batch_size = 4096
+learning_rate = 0.00015
+use_lr_schedule = true
+warmup_steps = 500
+min_lr_factor = 0.08
+gradient_clip_value = 0.0
+target_clip_value = 0.0
+mean_score_weight = 0.001
+stein_weight = 0.0005
+seed = 20260510
+
+[diagnostics]
+eval_tau_count = 8
+eval_pairs_per_lag = 50000
+operator_pairs_per_lag = 40000
+operator_lag_count = 24
+
+[figure]
+width = 3400
+height = 2600
+
+[output]
+model_bson = "../models/cond_score_residual_sigma005.bson"
+figure_png = "../figures/cond_score_diagnostics.png"
+metrics_txt = "../logs/cond_score_metrics.txt"
+
+[run]
+device = "GPU:1"
+required_gpu_name = "5070"
+train = true
+evaluate = true
+verbose = true

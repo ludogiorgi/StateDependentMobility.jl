@@ -1,0 +1,59 @@
+# Step 1 simulation for the periodic soft-spin stochastic Landau-Lifshitz chain.
+# Run from the repository root:
+#   julia --project=. --threads 24 SoftSpinLLGChain/code/sim.jl SoftSpinLLGChain/configs/sim.toml
+
+[simulation]
+N = 12
+lambda = 10.0
+mstar = 1.0
+J = 0.35
+K = 0.50
+Theta = 0.20
+gamma = 4.0
+alpha_perp = 0.25
+alpha_parallel = 0.03
+eps = 0.01
+
+dt = 0.00025
+ntrajectories = 72
+requested_threads = 24
+seed = 20260507
+production_snapshots_per_decorrelation = 100
+
+[initial_condition]
+initial_noise = 0.03
+branch_balance = true
+
+[reference_previous]
+# Latest accepted benchmark dataset in the new folder layout.
+hdf5_file = "../../FHDChainN16/data/fhd_chain_n16.h5"
+fallback_uncorrelated_count = 2777.7814226519336
+
+[calibration]
+pilot_t1 = 1000.0
+pilot_save_dt = 0.05
+pilot_burnin_fraction = 0.25
+pilot_max_lag_time = 600.0
+decorrelation_threshold = 0.05
+
+[statistics]
+burnin_fraction = 0.1
+histogram_bins = 180
+max_correlation_lags = 500
+max_pdf_samples = 500000
+
+[figure]
+width = 2800
+height = 2200
+dynamics_width = 2600
+dynamics_height = 1800
+trajectory_width = 2600
+trajectory_height = 1800
+dynamics_window_decorrelation_times = 10.0
+dynamics_max_frames = 5000
+
+[output]
+hdf5_file = "../data/soft_spin_llg_chain.h5"
+summary_png = "../figures/sim_summary.png"
+dynamics_png = "../figures/sim_dynamics.png"
+trajectories_png = "../figures/sim_trajectories.png"
