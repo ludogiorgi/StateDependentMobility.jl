@@ -1,5 +1,44 @@
 # Agent Attempts
 
+## 2026-05-17 — Push committed repository after GitHub authentication
+
+Status: Success
+
+Goal:
+- Push the already-created local source-preparation commit to
+  `ludogiorgi/StateDependentMobility.jl`.
+
+Approach:
+- Verified `gh auth status` after the user completed browser-device
+  authentication.
+- Confirmed `main` was one commit ahead of `origin/main`.
+- The normal HTTPS push still did not pick up credentials, so used the GitHub
+  CLI credential helper explicitly for the push.
+
+Files changed:
+- `docs/agents/ATTEMPTS.md`
+
+Files created temporarily:
+- None.
+
+Commands/tests run:
+- `gh auth status`
+- `git status -sb`
+- `git push origin main`
+- `git -c credential.https://github.com.helper='!gh auth git-credential' push origin main`
+
+Outcome:
+- Commit `cd9296d` was pushed to `origin/main`.
+
+Do not repeat:
+- If `gh auth status` is valid but plain `git push` still says it cannot read a
+  username, use `git -c credential.https://github.com.helper='!gh auth git-credential' push origin main`
+  or configure that helper permanently.
+
+Useful follow-up:
+- Consider setting the GitHub CLI credential helper persistently if future
+  pushes from this environment should work with plain `git push`.
+
 ## 2026-05-17 — Commit and push source-prepared repository
 
 Status: Partial
