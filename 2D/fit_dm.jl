@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 
-# Agent summary:
+# Implementation summary:
 # - Trains a full-matrix mobility network M_theta(x) on a configurable subset of
 #   normalized A_{m,n}(tau) channels for the 2D affine-noise Langevin benchmark.
 # - Automatically creates or reuses runs/run_### directories so each mobility run

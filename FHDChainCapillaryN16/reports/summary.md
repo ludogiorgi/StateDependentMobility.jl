@@ -228,7 +228,7 @@ should not be confused with a data-only Step 2 pipeline.
 
 ## Next action
 
-If a later agent starts data-only Step 2, do not reuse this analytic score or
+If a later data-only Step 2 implementation is started, do not reuse this analytic score or
 analytic `M_true` in any minimized training target. They are allowed only for
 ex-post diagnostics or for this explicitly analytic baseline. For a true
 data-only benchmark step, train DSM score and estimate Phi from data following

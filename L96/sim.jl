@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 
-# Agent summary:
+# Implementation summary:
 # - Simulates the stochastic Lorenz--96 system from the high-dimensional Results subsection of main.tex.
 # - The SDE is
 #       dx_i = [x_{i-1}(x_{i+1}-x_{i-2}) - x_i + F] dt

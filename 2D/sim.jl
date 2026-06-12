@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 
-# Agent summary:
+# Implementation summary:
 # - Simulates the two-dimensional nonreversible overdamped Langevin benchmark with affine multiplicative noise and writes the HDF5 dataset used by downstream score-training scripts.
 # - Also computes baseline observational diagnostics stored alongside the trajectories.
 

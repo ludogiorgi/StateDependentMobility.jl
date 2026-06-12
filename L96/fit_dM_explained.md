@@ -3,8 +3,8 @@
 This document describes what is implemented in [L96/fit_dM.jl](fit_dM.jl) and its
 included module [L96/src/learned_mobility_pipeline.jl](src/learned_mobility_pipeline.jl).
 It is meant to be read alongside [paper.tex](../paper.tex) (Section 2 *Method*
-and the L96 subsection of *Results*) and [AGENTS.md](../AGENTS.md), which
-fixes the conventions enforced in this code.
+and the L96 subsection of *Results*), which fixes the conventions enforced in
+this code.
 
 ---
 
@@ -55,7 +55,7 @@ Langevin model. The four high-level stages are:
    learned-$M$ reduced Langevin model against the observed univariate / pair
    PDFs, ACFs, lattice cross-correlations and observable channel correlations.
 
-Throughout, the conventions of [AGENTS.md](../AGENTS.md) are enforced:
+Throughout, the paper's mobility-inference conventions are enforced:
 
 - the diffusion is constant, $D(x)=Q$, so $M(x)=Q+R(x)$ with $R^\top=-R$;
 - everything ($F$, $Q$, $s$, $R$, $\nabla\cdot R$) is expressed in **raw**
@@ -172,7 +172,7 @@ reproducible from its own directory.
 ## 7. Score evaluation in raw $x$-coordinates
 
 The networks are trained on the standardized variable
-$u_i=(x_i-\mu)/\sigma_x$. To stay consistent with the AGENTS.md convention,
+$u_i=(x_i-\mu)/\sigma_x$. To stay consistent with the paper convention,
 this script always:
 
 1. standardizes the input to $u$,
@@ -215,7 +215,7 @@ post-burn-in samples; `compute_observable_batches` (lines 840–875) evaluates
 the centered observables in standardized coordinates on a batch.
 
 `compute_generator_observable_batches` (lines 1003–1056) is the **generator
-target** of AGENTS.md *Correction 1*. For an observable $\phi(x)$ in
+target** used for the L96 validation. For an observable $\phi(x)$ in
 standardized $u$,
 $$L\phi = F(x)\cdot\nabla\phi + Q:\nabla\nabla\phi,$$
 where each $\partial_{x_j}=\sigma_x^{-1}\partial_{u_j}$ contributes one
@@ -289,7 +289,7 @@ joint-score training range it:
      `reference_mobility=local_antisymmetric_fit` and the fit is stable)
      $$\dot C^{\text{ref-fit}}_{m,n}(\tau) = -\bigl\langle\phi_m(u_t)\,\bigl(Qs_{t|0} - R(x_0)s_{t|0}\bigr)_n/\sigma_x\bigr\rangle.$$
      The $-R(x_0)s_{t|0}$ sign comes from $M^\top=(Q+R)^\top=Q-R$ in the
-     conditional-score identity, exactly as AGENTS.md prescribes; **no
+     conditional-score identity, as required by the paper convention; **no
      $\nabla\cdot R$ enters this projection**.
 
 These four numbers (one $C$, one $\dot C^{\text{data}}$, two reference

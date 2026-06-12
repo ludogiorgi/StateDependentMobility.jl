@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 
-# Agent summary:
+# Implementation summary:
 # - Trains the stationary score network s(x) from the simulated observations.
 # - Saves the trained score model and its diagnostic figure for reuse by the mobility-fitting scripts.
 

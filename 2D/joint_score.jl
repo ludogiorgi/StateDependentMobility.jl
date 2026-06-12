@@ -1,6 +1,6 @@
 #!/usr/bin/env julia
 
-# Agent summary:
+# Implementation summary:
 # - Trains the lagged joint score model needed to estimate conditional scores s_{t|0}(x_t | x_0).
 # - Saves the trained conditional-score model and its diagnostics for the mobility-fitting scripts.
 

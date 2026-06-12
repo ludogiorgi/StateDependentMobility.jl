@@ -9,10 +9,6 @@
 **/runs/
 runs/
 
-# Agent scratch space
-.agent-scratch/*
-!.agent-scratch/.gitignore
-
 # Julia local/build artifacts
 .julia/
 *.ji
@@ -73,7 +69,6 @@ __pycache__/
 
 # Keep source-controlled documentation assets where explicitly wanted.
 !README.md
-!AGENTS.md
 !docs/**/*.md
 !**/reports/**/*.md
 !**/writeup/**/*.tex
