@@ -1,0 +1,16 @@
+cff-version: 1.2.0
+message: "If you use this software, please cite the associated paper."
+title: "StateDependentMobility.jl"
+authors:
+  - family-names: "Giorgini"
+    given-names: "Ludovico T."
+year: 2026
+license: "BSD-3-Clause"
+preferred-citation:
+  type: article
+  title: "Conditional Score-Based Modeling of Effective Langevin Dynamics"
+  authors:
+    - family-names: "Giorgini"
+      given-names: "Ludovico T."
+  journal: "arXiv preprint arXiv:2604.23952"
+  year: 2026

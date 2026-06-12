@@ -1,0 +1,53 @@
+# Matched data-only Phi/GFDT artifact for the Stein-improved GPU2 VR stationary score.
+
+[data]
+input_hdf5 = "../../../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 1.0
+lag_stride = 1
+
+[evaluation]
+max_fit_lags = 60
+pairs_per_lag_phi = 240000
+pairs_per_lag_cdot = 120000
+phi_fit_max_lag = 3
+phi_fit_degree = 2
+phi_include_zero_lag = true
+phi_zero_lag_samples = 300000
+score_batch_size = 4096
+true_mobility_samples = 60000
+
+[phi_shortlag]
+run = false
+samples = 0
+dt = 0.00025
+save_steps = [0, 4, 8, 12]
+
+[forward]
+run = false
+dt = 0.003
+total_time = 180.0
+burnin_time = 30.0
+save_dt = 0.04
+ntrajectories = 72
+score_clip = 120.0
+
+[figure]
+width = 3600
+height = 3000
+
+[output]
+artifact_bson = "../models/fit_Phi_gpu2_vr_stein_epoch270_seed0505_artifacts.bson"
+metrics_txt = "../logs/fit_Phi_gpu2_vr_stein_epoch270_seed0505_metrics.txt"
+cdot_figure_png = "../figures/phi_gpu2_vr_stein_epoch270_seed0505_cdot_gfdt.png"
+phi_figure_png = "../figures/phi_gpu2_vr_stein_epoch270_seed0505_recovery.png"
+forward_stats_png = "../figures/unused_phi_gpu2_vr_stein_epoch270_seed0505_forward_stats.png"
+forward_cmn_png = "../figures/unused_phi_gpu2_vr_stein_epoch270_seed0505_forward_cmn.png"
+forward_hdf5 = "../data/unused_phi_gpu2_vr_stein_epoch270_seed0505_forward_langevin.h5"
+
+[run]
+device = "GPU:2"
+required_gpu_name = "5070"
+seed = 2026060505
+verbose = true

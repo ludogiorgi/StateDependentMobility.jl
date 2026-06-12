@@ -9,9 +9,34 @@ using Printf
 using Statistics
 
 const COMP_NAMES = ("mx", "my", "mz")
+const SCORE_RADIAL_OBSERVABLES = Set(vcat(["$(a)_score_radial" for a in COMP_NAMES],
+    ["$(a)_score_radial_scaled" for a in COMP_NAMES], ["score_radial2"]))
+const MOBILITY_CHANNEL_PREFIXES = ("mc_s", "mc_Ts", "mc_Ps", "mc_Cs")
+const EXPANDED_SCORE_TERM_PREFIXES = (
+    "mc_rb0", "mc_rb1", "mc_rb2",
+    "mc_u", "mc_Tu", "mc_Pu", "mc_Cu",
+    "mc_a", "mc_Ta", "mc_Pa", "mc_Ca",
+)
+
+function is_mobility_score_channel(name::AbstractString)
+    s = String(name)
+    return any(prefix -> startswith(s, prefix * "_"), MOBILITY_CHANNEL_PREFIXES)
+end
 
 struct NonlinearLibrary
     names::Vector{String}
+    score_radial_scale::Float64
+    radial_basis::Matrix{Float64}
+end
+default_radial_basis() = Matrix{Float64}(I, 3, 3)
+NonlinearLibrary(names::Vector{String}) =
+    NonlinearLibrary(names, 1.0, default_radial_basis())
+NonlinearLibrary(names::Vector{String}, score_radial_scale::Real) =
+    NonlinearLibrary(names, Float64(score_radial_scale), default_radial_basis())
+
+function uses_expanded_score_terms(lib::NonlinearLibrary)
+    return any(name -> any(prefix -> startswith(name, prefix * "_"), EXPANDED_SCORE_TERM_PREFIXES),
+        lib.names)
 end
 
 function nonlinear_candidate_names(family::AbstractString="baseline")
@@ -59,10 +84,18 @@ function nonlinear_candidate_names(family::AbstractString="baseline")
         append!(names, ["dot_pm", "lap2", "neighbor_r2diff", "neighbor_r2sum",
             "nn_align", "twist2", "cross_m_x", "cross_m_y", "cross_m_z"])
     end
+    for a in COMP_NAMES
+        push!(names, "$(a)_score_radial")
+    end
+    push!(names, "score_radial2")
     return unique(names)
 end
 
-function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams, lib::NonlinearLibrary)
+requires_score_proxy(lib::NonlinearLibrary) =
+    any(name -> name in SCORE_RADIAL_OBSERVABLES || is_mobility_score_channel(name),
+        lib.names)
+
+function expanded_score_term_observables(raw::Array{Float32, 3}, lib::NonlinearLibrary)
     N, _, B = size(raw)
     obs = Array{Float32}(undef, N, length(lib.names), B)
     name_to_idx = Dict(name => idx for (idx, name) in enumerate(lib.names))
@@ -73,6 +106,69 @@ function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams, lib::Nonli
             x = ntuple(c -> Float64(raw[i, c, b]), 3)
             xm = ntuple(c -> Float64(raw[im, c, b]), 3)
             xp = ntuple(c -> Float64(raw[ip, c, b]), 3)
+            r2 = x[1]^2 + x[2]^2 + x[3]^2
+            lap = ntuple(c -> xp[c] + xm[c] - 2.0 * x[c], 3)
+            mono = (1.0, r2, r2^2)
+            rb = ntuple(k -> sum(lib.radial_basis[k, q] * mono[q] for q in 1:3), 3)
+            udot = x[1] * lap[1] + x[2] * lap[2] + x[3] * lap[3]
+            Tu = ntuple(c -> r2 * lap[c] - x[c] * udot, 3)
+            Pu = ntuple(c -> x[c] * udot, 3)
+            Cu = cross3(x[1], x[2], x[3], lap[1], lap[2], lap[3])
+            anis = (0.0, 0.0, x[3])
+            adot = x[3]^2
+            Ta = ntuple(c -> r2 * anis[c] - x[c] * adot, 3)
+            Pa = ntuple(c -> x[c] * adot, 3)
+            Ca = cross3(x[1], x[2], x[3], anis[1], anis[2], anis[3])
+            for (ci, cname) in enumerate(COMP_NAMES)
+                vals = (
+                    "mc_rb0_$(cname)" => rb[1] * x[ci],
+                    "mc_rb1_$(cname)" => rb[2] * x[ci],
+                    "mc_rb2_$(cname)" => rb[3] * x[ci],
+                    "mc_u_$(cname)" => lap[ci],
+                    "mc_Tu_$(cname)" => Tu[ci],
+                    "mc_Pu_$(cname)" => Pu[ci],
+                    "mc_Cu_$(cname)" => Cu[ci],
+                    "mc_a_$(cname)" => anis[ci],
+                    "mc_Ta_$(cname)" => Ta[ci],
+                    "mc_Pa_$(cname)" => Pa[ci],
+                    "mc_Ca_$(cname)" => Ca[ci],
+                )
+                for (name, val) in vals
+                    idx = get(name_to_idx, name, 0)
+                    idx > 0 && (obs[i, idx, b] = Float32(val))
+                end
+            end
+        end
+    end
+    return obs
+end
+
+function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams,
+        lib::NonlinearLibrary; score_raw::Union{Nothing, Array{Float32, 3}}=nothing)
+    if uses_expanded_score_terms(lib)
+        all(name -> any(prefix -> startswith(name, prefix * "_"),
+                EXPANDED_SCORE_TERM_PREFIXES), lib.names) ||
+            error("Expanded score-term libraries cannot be mixed with legacy nonlinear observables in strict mode.")
+        return expanded_score_term_observables(raw, lib)
+    end
+    N, _, B = size(raw)
+    if requires_score_proxy(lib)
+        score_raw === nothing &&
+            error("Observable library contains learned-score proxy observables but score_raw was not supplied.")
+        size(score_raw) == size(raw) ||
+            error("score_raw size $(size(score_raw)) does not match raw size $(size(raw)).")
+    end
+    obs = Array{Float32}(undef, N, length(lib.names), B)
+    name_to_idx = Dict(name => idx for (idx, name) in enumerate(lib.names))
+    @inbounds for b in 1:B
+        for i in 1:N
+            im = periodic(i - 1, N)
+            ip = periodic(i + 1, N)
+            x = ntuple(c -> Float64(raw[i, c, b]), 3)
+            xm = ntuple(c -> Float64(raw[im, c, b]), 3)
+            xp = ntuple(c -> Float64(raw[ip, c, b]), 3)
+            s = score_raw === nothing ? (0.0, 0.0, 0.0) :
+                ntuple(c -> Float64(score_raw[i, c, b]), 3)
             r2 = x[1]^2 + x[2]^2 + x[3]^2
             r2p = xp[1]^2 + xp[2]^2 + xp[3]^2
             r2m = xm[1]^2 + xm[2]^2 + xm[3]^2
@@ -92,6 +188,23 @@ function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams, lib::Nonli
             Uloc = 0.25 * p.lambda * (r2 - p.mstar^2)^2 +
                 0.25 * p.J * (diffp2 + diffm2) - 0.5 * p.K * x[3]^2
             amp_dev = r2 - p.mstar^2
+            score_radial = x[1] * s[1] + x[2] * s[2] + x[3] * s[3]
+            score_radial_scaled = score_radial / max(lib.score_radial_scale, eps(Float64))
+            xdot_s = x[1] * s[1] + x[2] * s[2] + x[3] * s[3]
+            Ts = ntuple(c -> r2 * s[c] - x[c] * xdot_s, 3)
+            Ps = ntuple(c -> x[c] * xdot_s, 3)
+            Cs = cross3(x[1], x[2], x[3], s[1], s[2], s[3])
+            mono = (1.0, r2, r2^2)
+            rb = ntuple(k -> sum(lib.radial_basis[k, q] * mono[q] for q in 1:3), 3)
+            udot = x[1] * lap[1] + x[2] * lap[2] + x[3] * lap[3]
+            Tu = ntuple(c -> r2 * lap[c] - x[c] * udot, 3)
+            Pu = ntuple(c -> x[c] * udot, 3)
+            Cu = cross3(x[1], x[2], x[3], lap[1], lap[2], lap[3])
+            anis = (0.0, 0.0, x[3])
+            adot = x[3]^2
+            Ta = ntuple(c -> r2 * anis[c] - x[c] * adot, 3)
+            Pa = ntuple(c -> x[c] * adot, 3)
+            Ca = cross3(x[1], x[2], x[3], anis[1], anis[2], anis[3])
 
             for (ai, a) in enumerate(COMP_NAMES), (bi, cname) in enumerate(COMP_NAMES)
                 haskey(name_to_idx, "$(a)_$(cname)2") &&
@@ -119,6 +232,7 @@ function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams, lib::Nonli
                 "mperp2_mz2" => mperp2 * x[3]^2,
                 "amp_dev" => amp_dev, "amp_dev2" => amp_dev^2,
                 "Uloc2" => Uloc^2,
+                "score_radial2" => score_radial^2,
                 "dot_pm" => dotpm, "lap2" => lap2,
                 "neighbor_r2diff" => r2p - r2m,
                 "neighbor_r2sum" => r2p + r2m,
@@ -131,6 +245,27 @@ function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams, lib::Nonli
                 haskey(name_to_idx, name) && (obs[i, name_to_idx[name], b] = Float32(val))
             end
             for (ai, a) in enumerate(COMP_NAMES)
+                mobility_channel_vals = Dict(
+                    "mc_m_$(a)" => x[ai],
+                    "mc_s_$(a)" => s[ai],
+                    "mc_Ts_$(a)" => Ts[ai],
+                    "mc_Ps_$(a)" => Ps[ai],
+                    "mc_Cs_$(a)" => Cs[ai],
+                    "mc_rb0_$(a)" => rb[1] * x[ai],
+                    "mc_rb1_$(a)" => rb[2] * x[ai],
+                    "mc_rb2_$(a)" => rb[3] * x[ai],
+                    "mc_u_$(a)" => lap[ai],
+                    "mc_Tu_$(a)" => Tu[ai],
+                    "mc_Pu_$(a)" => Pu[ai],
+                    "mc_Cu_$(a)" => Cu[ai],
+                    "mc_a_$(a)" => anis[ai],
+                    "mc_Ta_$(a)" => Ta[ai],
+                    "mc_Pa_$(a)" => Pa[ai],
+                    "mc_Ca_$(a)" => Ca[ai],
+                )
+                for (name, val) in mobility_channel_vals
+                    haskey(name_to_idx, name) && (obs[i, name_to_idx[name], b] = Float32(val))
+                end
                 vals2 = Dict(
                     "$(a)_dot_p" => x[ai] * dotp,
                     "$(a)_dot_m" => x[ai] * dotm,
@@ -150,6 +285,8 @@ function nonlinear_observables(raw::Array{Float32, 3}, p::SpinParams, lib::Nonli
                     "$(a)_amp_dev" => x[ai] * amp_dev,
                     "$(a)_amp_dev2" => x[ai] * amp_dev^2,
                     "$(a)_Uloc2" => x[ai] * Uloc^2,
+                    "$(a)_score_radial" => x[ai] * score_radial,
+                    "$(a)_score_radial_scaled" => x[ai] * score_radial_scaled,
                     "$(a)_dot_pm" => x[ai] * dotpm,
                     "$(a)_lap2" => x[ai] * lap2,
                     "$(a)_neighbor_r2diff" => x[ai] * (r2p - r2m),
@@ -207,7 +344,9 @@ function sample_fixed_lag_window(sampler::CondPairSampler, lag::Int, npairs::Int
 end
 
 function estimate_nonlinear_means(sampler::CondPairSampler, p::SpinParams,
-        lib::NonlinearLibrary, nsamples::Int, rng::AbstractRNG)
+        lib::NonlinearLibrary, nsamples::Int, rng::AbstractRNG; score_model=nothing,
+        stats::Union{Nothing, DataStats}=nothing, score_sigma::Float32=0f0,
+        device::Union{Nothing, ExecutionDevice}=nothing, batch_size::Int=4096)
     nt, N, _, ntraj = size(sampler.states)
     raw = Array{Float32}(undef, N, 3, nsamples)
     @inbounds for b in 1:nsamples
@@ -215,7 +354,15 @@ function estimate_nonlinear_means(sampler::CondPairSampler, p::SpinParams,
         tr = rand(rng, 1:ntraj)
         raw[:, :, b] .= sampler.states[t, :, :, tr]
     end
-    obs = nonlinear_observables(raw, p, lib)
+    score_raw = if requires_score_proxy(lib)
+        (score_model === nothing || stats === nothing || device === nothing) &&
+            error("Learned-score proxy observable means require score_model, stats, and device.")
+        evaluate_raw_score_local(score_model, raw, stats, score_sigma, device;
+            batch_size=batch_size)
+    else
+        nothing
+    end
+    obs = nonlinear_observables(raw, p, lib; score_raw=score_raw)
     return [mean(Float64, @view obs[:, j, :]) for j in eachindex(lib.names)]
 end
 

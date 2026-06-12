@@ -1,55 +1,63 @@
 # StateDependentMobility.jl
 
-Julia code for learning and validating state-dependent mobility tensors in reduced Langevin models from simulated trajectory data.
+Julia code for the benchmark pipelines used in:
 
-## Main Scripts
+Ludovico T. Giorgini, "Conditional Score-Based Modeling of Effective Langevin
+Dynamics", arXiv:2604.23952, 2026.
 
-- `2D/sim.jl`: simulate the 2D reference SDE and save trajectories.
-- `2D/score.jl`: train the stationary score model for the 2D system.
-- `2D/joint_score.jl`: train the joint score model for the 2D system.
-- `2D/fit_dm.jl`: fit the mobility model `M(x)` from correlation operators and optionally run forward validation for the 2D system.
-- `L96/sim.jl`: simulate the stochastic Lorenz--96 system and save trajectories plus diagnostics.
-- `L96/score.jl`: train the stationary score model for the Lorenz--96 system and save diagnostics.
-- `L96/joint_score.jl`: train the lag-conditioned joint score model for the Lorenz--96 system and save diagnostics.
+The public repository contains the lightweight source code and configuration
+files needed to reproduce the paper benchmarks. Large generated artifacts
+(`*.h5`, `*.bson`, figures, logs, and trained checkpoints) are intentionally not
+tracked.
 
-## Main Configs
+## Contents
 
-- `2D/sim.toml`
-- `2D/score.toml`
-- `2D/joint_score.toml`
-- `2D/fit_dm.toml`
-- `L96/sim.toml`
-- `L96/score.toml`
-- `L96/joint_score.toml`
+- `2D/`: two-dimensional reference benchmark.
+- `SoftSpinLLGChain/`: soft-spin chain benchmark and manuscript-result configs.
+- `ScoreUNet1D.jl/`: pinned submodule providing the periodic 1D U-Net backbone.
 
-## Typical Workflow
+## Setup
 
-Run these commands from the repository root.
-
-### 2D Pipeline
+Clone with the submodule:
 
 ```bash
-julia --project=. --threads 36 2D/sim.jl 2D/sim.toml
-julia --project=. --threads 36 2D/score.jl 2D/score.toml
-julia --project=. --threads 36 2D/joint_score.jl 2D/joint_score.toml
-julia --project=. --threads 36 2D/fit_dm.jl 2D/fit_dm.toml
+git clone --recurse-submodules https://github.com/ludogiorgi/StateDependentMobility.jl.git
+cd StateDependentMobility.jl
+julia --project=. -e 'using Pkg; Pkg.instantiate()'
 ```
 
-### L96 Pipeline
+If the repository was already cloned:
 
 ```bash
-julia --project=. --threads 36 L96/sim.jl L96/sim.toml
-julia --project=. --threads 36 L96/score.jl L96/score.toml
-julia --project=. --threads 36 L96/joint_score.jl L96/joint_score.toml
+git submodule update --init --recursive
 ```
 
-2D run outputs are organized under `2D/runs/run_###/`.
-L96 score outputs are written to `L96/outputs/score.bson` and `L96/outputs/score_diagnostics.png` by default.
-L96 joint-score outputs are written to `L96/outputs/joint_score.bson` and `L96/outputs/joint_score_diagnostics.png` by default.
+## Workflows
 
-To inspect `L96/outputs/joint_score.bson` in Julia, first load the joint-score definitions so the saved model and config types are available:
+Run commands from the repository root.
 
-```julia
-include("L96/joint_score.jl")
-state = BSON.load("L96/outputs/joint_score.bson")
+```bash
+julia --project=. --threads auto 2D/sim.jl 2D/sim.toml
+julia --project=. --threads auto 2D/score.jl 2D/score.toml
+julia --project=. --threads auto 2D/joint_score.jl 2D/joint_score.toml
+julia --project=. --threads auto 2D/fit_dm.jl 2D/fit_dm.toml
 ```
+
+For the soft-spin benchmark, the core entry points are:
+
+```bash
+julia --project=. --threads auto SoftSpinLLGChain/code/sim.jl SoftSpinLLGChain/configs/sim.toml
+julia --project=. --threads auto SoftSpinLLGChain/code/score.jl SoftSpinLLGChain/configs/score.toml
+julia --project=. --threads auto SoftSpinLLGChain/code/fit_Phi.jl SoftSpinLLGChain/configs/fit_Phi.toml
+julia --project=. --threads auto SoftSpinLLGChain/code/cond_score.jl SoftSpinLLGChain/configs/cond_score.toml
+julia --project=. --threads auto SoftSpinLLGChain/code/fit_dM.jl SoftSpinLLGChain/configs/mobility11_analytic_fullcache_nosignal_gpu0.toml
+```
+
+The soft-spin manuscript result manifests are in:
+
+```text
+SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/manuscript_figure_sets/
+```
+
+The primary paper branch is `data_epoch240_best_corr`. The comparison branches
+are `data_stein270_best_corr` and `phys_score_11obs_cond`.

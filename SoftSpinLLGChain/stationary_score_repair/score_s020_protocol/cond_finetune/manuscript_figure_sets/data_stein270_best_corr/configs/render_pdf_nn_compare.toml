@@ -1,0 +1,23 @@
+[inputs]
+observations = "../../../../../../../SoftSpinLLGChain/data/soft_spin_llg_chain.h5"
+nn = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/data/forward_M_stein270_transfer_best_gpu2.h5"
+
+[sampling]
+seed = 20260521
+observation_postburn_fraction = 0.10
+nn_postburn_fraction = 0.0
+frames = 700
+max_univariate_samples = 600000
+max_bivariate_samples = 320000
+kde_points_1d = 320
+kde_points_2d = 112
+quantile_low = 0.002
+quantile_high = 0.998
+
+[figure]
+width = 4600
+height = 5600
+font_scale = 5.3
+
+[output]
+png = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/manuscript_figure_sets/data_stein270_best_corr/spin_pdfs.png"

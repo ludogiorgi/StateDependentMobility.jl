@@ -1,0 +1,4 @@
+[submodule "ScoreUNet1D.jl"]
+	path = ScoreUNet1D.jl
+	url = https://github.com/ludogiorgi/ScoreUNet1D.jl.git
+	branch = support/state-dependent-mobility

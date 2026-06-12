@@ -1,0 +1,27 @@
+# Strict 11-family data-only A_mn target for the Stein epoch-270 stationary score.
+# A = saved data-only Cdot_data - Phi-GFDT recomputed with the branch score and Phi.
+
+[inputs]
+input_hdf5 = "../../../../../SoftSpinLLGChain/data/soft_spin_llg_chain.h5"
+analytic_target_bson = "../../../../../SoftSpinLLGChain/models/mobility11/analytic/A_target.bson"
+score_bson = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260.bson"
+phi_bson = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/fit_Phi_gpu2_vr_stein_epoch270_seed0505_artifacts.bson"
+
+[data]
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 0.60
+lag_stride = 1
+
+[estimator]
+pairs_per_lag = 120000
+score_batch_size = 4096
+seed = 2026060913
+
+[outputs]
+target_bson = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/models/A_stein270_noncheating.bson"
+metrics_txt = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/logs/A_stein270_noncheating.txt"
+figure_png = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/figures/A_stein270_noncheating_vs_reference.png"
+
+[run]
+device = "GPU:2"
+required_gpu_name = "5070"

@@ -8,6 +8,7 @@
 **/outputs/
 **/runs/
 runs/
+_local_archive/
 
 # Julia local/build artifacts
 .julia/
@@ -32,7 +33,11 @@ __pycache__/
 *.swo
 *~
 
-# LaTeX build artifacts
+# LaTeX and manuscript artifacts
+*.tex
+*.bib
+*.sty
+*.cls
 *.aux
 *.bbl
 *.bcf
@@ -47,6 +52,8 @@ __pycache__/
 *.synctex.gz
 *.toc
 *.xdv
+manuscript/
+paper/
 
 # Generated binaries and archives
 *.pdf
@@ -70,18 +77,11 @@ __pycache__/
 # Keep source-controlled documentation assets where explicitly wanted.
 !README.md
 !docs/**/*.md
-!**/reports/**/*.md
-!**/writeup/**/*.tex
 
 # Keep source/configuration files.
 !**/*.jl
 !**/*.toml
-!**/*.bib
-!**/*.tex
 !**/*.md
 
-# Local prompt scratch notes are not repository documentation.
+# Local notes are not repository documentation.
 prompts.md
-
-# Local dependency checkout; add as a real submodule only if intentionally needed.
-ScoreUNet1D.jl/

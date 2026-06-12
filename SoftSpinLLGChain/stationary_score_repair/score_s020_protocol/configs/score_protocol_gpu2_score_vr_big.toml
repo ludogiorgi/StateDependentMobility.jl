@@ -1,0 +1,76 @@
+# Strict data-only sigma=0.02 LargeCNN continuation.
+# Replacement main branch: unscaled variance-reduced DSM on RTX 5070.
+
+[data]
+input_hdf5 = "../../../data/soft_spin_llg_chain.h5"
+burnin_fraction = 0.1
+max_samples = 8388608
+spin_inversion_augment = true
+enforce_zero_mean = true
+validation_fraction = 0.0
+
+[model]
+architecture = "largekernel_rescnn"
+base_channels = 128
+channel_multipliers = [1, 2]
+kernel_size = 11
+residual_dilations = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+residual_repeats = 1
+periodic = true
+activation = "swish"
+final_activation = "identity"
+normalization = "none"
+output_mode = "score"
+input_features = "spin_r2"
+init_seed = 703
+
+[training]
+sigma = 0.02
+allow_nondefault_sigma = true
+epochs = 80
+batch_size = 2048
+learning_rate = 7.5e-7
+final_learning_rate = 7.5e-8
+lr_schedule_mode = "local_exp"
+epoch_subset_size = 524288
+use_lr_schedule = true
+min_lr_factor = 0.1
+save_best_validation = false
+symmetrized_loss = true
+loss_output_scale = "score"
+antithetic_noise = true
+gradient_accumulation_steps = 2
+checkpoint_every = 10
+warm_start_bson = "../../../../SoftSpinLLGChain/stationary_score_repair/models/score_largecnn_s020_e140_gpu1_probe_epoch0160.bson"
+resume_training_state = true
+analytic_every = 5
+seed = 2026060503
+
+[figure]
+exact_score_samples = 300000
+width = 3200
+height = 3000
+
+[langevin]
+dt = 0.0005
+total_time = 80.0
+burnin_time = 16.0
+save_dt = 0.04
+ntrajectories = 192
+score_clip = 120.0
+max_pdf_samples = 500000
+
+[output]
+model_bson = "../models/score_protocol_gpu2_score_vr_big.bson"
+figure_png = "../figures/score_protocol_gpu2_score_vr_big.png"
+langevin_hdf5 = "../data/score_protocol_gpu2_score_vr_big_langevin.h5"
+langevin_figure_png = "../figures/score_protocol_gpu2_score_vr_big_langevin.png"
+metrics_txt = "../logs/score_protocol_gpu2_score_vr_big_metrics.txt"
+analytic_history_txt = "../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/logs/score_protocol_gpu2_score_vr_big_analytic.csv"
+
+[run]
+device = "GPU:2"
+required_gpu_name = "5070"
+train = true
+evaluate = false
+langevin_validate = false

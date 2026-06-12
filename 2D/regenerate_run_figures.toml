@@ -13,8 +13,8 @@ fontsize = 28
 axis_ticklabelsize = 25
 axis_labelsize = 31
 axis_titlesize = 33
-legend_labelsize = 24
-legend_titlesize = 25
+legend_labelsize = 34
+legend_titlesize = 34
 colorbar_labelsize = 28
 colorbar_ticklabelsize = 22
 label_fontsize = 31
@@ -36,4 +36,8 @@ height = 2800
 
 [forward]
 width = 4200
-height = 3600
+height = 5000
+merge_stats_into_cphi = true
+write_stats_figure = false
+cphi_max_time = 5.0
+cphi_panel_count = 18

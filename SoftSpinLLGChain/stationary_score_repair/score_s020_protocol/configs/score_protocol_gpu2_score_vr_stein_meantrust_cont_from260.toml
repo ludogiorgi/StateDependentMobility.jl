@@ -1,0 +1,98 @@
+# Continuation of the accepted meantrust repair from its retained epoch-260 state.
+# This intentionally uses a separate output namespace so the accepted epoch-260
+# model remains untouched while testing whether later epochs reduce Stein loss.
+
+[data]
+input_hdf5 = "../../../data/soft_spin_llg_chain.h5"
+burnin_fraction = 0.1
+max_samples = 8388608
+spin_inversion_augment = true
+enforce_zero_mean = true
+validation_fraction = 0.0
+
+[model]
+architecture = "largekernel_rescnn"
+base_channels = 128
+channel_multipliers = [1, 2]
+kernel_size = 11
+residual_dilations = [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1]
+residual_repeats = 1
+periodic = true
+activation = "swish"
+final_activation = "identity"
+normalization = "none"
+output_mode = "score"
+input_features = "spin_r2"
+init_seed = 703
+
+[training]
+sigma = 0.02
+allow_nondefault_sigma = true
+epochs = 20
+batch_size = 2048
+learning_rate = 1.0e-7
+final_learning_rate = 2.0e-8
+lr_schedule_mode = "local_exp"
+epoch_subset_size = 262144
+use_lr_schedule = true
+min_lr_factor = 0.20
+save_best_validation = false
+symmetrized_loss = true
+loss_output_scale = "score"
+antithetic_noise = true
+gradient_accumulation_steps = 2
+checkpoint_every = 5
+warm_start_bson = "../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/score_protocol_gpu2_score_vr_stein_meantrust.bson"
+resume_training_state = true
+analytic_every = 5
+seed = 2026060503
+
+stein_weight_max = 1.0e-3
+stein_weight_warmup_epochs = 0
+stein_every = 1
+stein_samples = 8000
+stein_batch_size = 512
+stein_obs_family = "core"
+stein_phi_bson = "../../../../SoftSpinLLGChain/models/fit_Phi_phys_pC_dataonly_artifacts.bson"
+stein_bootstrap_blocks = 32
+stein_weight_floor = 1.0e-24
+stein_gfdt_reduction = "mean"
+stein_lambda_x = 1.0
+stein_lambda_0 = 1.0
+move_weight = 50.0
+move_reference_bson = "../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/score_protocol_gpu2_score_vr_big.bson"
+
+metric_guard_abort = true
+guard_max_rel_rmse = 5.5e-2
+guard_max_safe_rel_rmse = 5.5e-2
+guard_max_move_rel = 1.5e-2
+
+[figure]
+exact_score_samples = 300000
+width = 3200
+height = 3000
+
+[langevin]
+dt = 0.0005
+total_time = 80.0
+burnin_time = 16.0
+save_dt = 0.04
+ntrajectories = 192
+score_clip = 120.0
+max_pdf_samples = 500000
+
+[output]
+model_bson = "../models/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260.bson"
+figure_png = "../figures/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260.png"
+langevin_hdf5 = "../data/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260_langevin.h5"
+langevin_figure_png = "../figures/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260_langevin.png"
+metrics_txt = "../logs/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260_metrics.txt"
+analytic_history_txt = "../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/logs/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260_analytic.csv"
+stein_history_txt = "../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/logs/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260_stein.csv"
+
+[run]
+device = "GPU:2"
+required_gpu_name = "5070"
+train = true
+evaluate = false
+langevin_validate = false

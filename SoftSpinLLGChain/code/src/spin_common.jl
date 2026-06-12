@@ -4,6 +4,7 @@ const REPO_ROOT = normpath(joinpath(@__DIR__, "..", "..", ".."))
 const SCOREUNET_PROJECT = normpath(joinpath(REPO_ROOT, "ScoreUNet1D.jl"))
 const SCOREUNET_SRC = joinpath(SCOREUNET_PROJECT, "src")
 const SPIN_CHANNELS = 3
+const STATEDEP_HEADLESS = lowercase(get(ENV, "STATEDEP_HEADLESS", "0")) in ("1", "true", "yes")
 
 ENV["GKSwstype"] = get(ENV, "GKSwstype", "100")
 
@@ -14,8 +15,13 @@ function ensure_packages(packages::Vector{String})
     return nothing
 end
 
-ensure_packages(["BSON", "CUDA", "cuDNN", "Flux", "Functors", "GLMakie",
-    "HDF5", "KernelDensity", "NNlib", "ProgressMeter", "TOML"])
+const REQUIRED_PACKAGES = STATEDEP_HEADLESS ?
+    ["BSON", "CUDA", "cuDNN", "Flux", "Functors", "HDF5", "KernelDensity",
+        "NNlib", "ProgressMeter", "TOML"] :
+    ["BSON", "CUDA", "cuDNN", "Flux", "Functors", "GLMakie", "HDF5",
+        "KernelDensity", "NNlib", "ProgressMeter", "TOML"]
+
+ensure_packages(REQUIRED_PACKAGES)
 
 function display_is_usable(display::AbstractString)
     xdpyinfo = Sys.which("xdpyinfo")
@@ -58,7 +64,6 @@ using CUDA
 using cuDNN
 using Flux
 using Functors
-using GLMakie
 using HDF5
 using KernelDensity
 using LinearAlgebra
@@ -76,8 +81,11 @@ include(joinpath(SCOREUNET_SRC, "architecture", "UNet1D.jl"))
 include(joinpath(SCOREUNET_SRC, "data", "DataPipeline.jl"))
 
 const STYLE_FILE = normpath(joinpath(REPO_ROOT, "2D", "src", "figure_style.jl"))
-isfile(STYLE_FILE) && include(STYLE_FILE)
-GLMakie.activate!()
+if !STATEDEP_HEADLESS
+    using GLMakie
+    isfile(STYLE_FILE) && include(STYLE_FILE)
+    GLMakie.activate!()
+end
 
 if !isdefined(@__MODULE__, :STYLE_PRIMARY)
     const STYLE_PRIMARY = :dodgerblue4
@@ -372,6 +380,81 @@ end
 Functors.@functor DirectSpinR2ScoreUNet (backbone,)
 (model::DirectSpinR2ScoreUNet)(x) = @view model.backbone(spin_r2_feature(x))[:, 1:SPIN_CHANNELS, :]
 
+struct DirectSpinScoreNet{M}
+    backbone::M
+end
+Functors.@functor DirectSpinScoreNet (backbone,)
+(model::DirectSpinScoreNet)(x) = @view model.backbone(x)[:, 1:SPIN_CHANNELS, :]
+
+struct DirectSpinR2ScoreNet{M}
+    backbone::M
+end
+Functors.@functor DirectSpinR2ScoreNet (backbone,)
+(model::DirectSpinR2ScoreNet)(x) = @view model.backbone(spin_r2_feature(x))[:, 1:SPIN_CHANNELS, :]
+
+struct PeriodicResidualBlock{L}
+    layers::L
+end
+Functors.@functor PeriodicResidualBlock
+(block::PeriodicResidualBlock)(x) = x .+ block.layers(x)
+
+function channel_norm_layer(channels::Int, normalization::Symbol)
+    normalization == :none && return identity
+    if normalization == :groupnorm || normalization == :layernorm
+        groups = normalization == :layernorm ? 1 : min(8, channels)
+        while channels % groups != 0
+            groups -= 1
+        end
+        return Flux.GroupNorm(channels, groups)
+    end
+    error("Unsupported residual score normalization=$(normalization).")
+end
+
+function periodic_residual_block(channels::Int; kernel::Int=5, dilation::Int=1,
+        activation::Function=Flux.swish, normalization::Symbol=:none)
+    return PeriodicResidualBlock(Chain(
+        PeriodicConv1D(channels, channels; kernel=kernel, dilation=dilation),
+        channel_norm_layer(channels, normalization),
+        activation,
+        PeriodicConv1D(channels, channels; kernel=kernel, dilation=dilation),
+        channel_norm_layer(channels, normalization),
+    ))
+end
+
+function build_periodic_residual_score_net(in_channels::Int, out_channels::Int;
+        base_channels::Int=160, kernel::Int=5, dilations::Vector{Int}=[1, 2, 4, 8, 4, 2, 1],
+        repeats::Int=1, activation::Function=Flux.swish, normalization::Symbol=:none)
+    layers = Any[
+        PeriodicConv1D(in_channels, base_channels; kernel=kernel),
+        channel_norm_layer(base_channels, normalization),
+        activation,
+    ]
+    for _ in 1:repeats, d in dilations
+        push!(layers, periodic_residual_block(base_channels; kernel=kernel,
+            dilation=d, activation=activation, normalization=normalization))
+        push!(layers, activation)
+    end
+    push!(layers, PeriodicConv1D(base_channels, out_channels; kernel=1))
+    return Chain(layers...)
+end
+
+function build_periodic_cnn_score_net(in_channels::Int, out_channels::Int;
+        base_channels::Int=160, kernel::Int=5, dilations::Vector{Int}=[1, 2, 4, 8, 4, 2, 1],
+        repeats::Int=1, activation::Function=Flux.swish, normalization::Symbol=:none)
+    layers = Any[
+        PeriodicConv1D(in_channels, base_channels; kernel=kernel),
+        channel_norm_layer(base_channels, normalization),
+        activation,
+    ]
+    for _ in 1:repeats, d in dilations
+        push!(layers, PeriodicConv1D(base_channels, base_channels; kernel=kernel, dilation=d))
+        push!(layers, channel_norm_layer(base_channels, normalization))
+        push!(layers, activation)
+    end
+    push!(layers, PeriodicConv1D(base_channels, out_channels; kernel=1))
+    return Chain(layers...)
+end
+
 struct PhysicalFeatureScore{T}
     coeff::T
     mean::T
@@ -513,9 +596,9 @@ end
 function max_compatible_unet_levels(length_dim::Int)
     levels = 0
     current = length_dim
-    while current > 1 && iseven(current)
+    while current >= 2
         levels += 1
-        current ÷= 2
+        current = fld(current, 2)
     end
     return max(levels, 1)
 end
@@ -564,6 +647,29 @@ function build_spin_unet(cfg::ScoreUNetConfig, norm::Symbol, N::Int;
     error("Unsupported score output mode $(output_mode).")
 end
 
+function build_spin_residual_score_net(cfg::ScoreUNetConfig, norm::Symbol, N::Int;
+        input_features::Symbol=:spin, architecture::Symbol=:dilated_rescnn,
+        dilations::Vector{Int}=[1, 2, 4, 8, 4, 2, 1], repeats::Int=1)
+    in_ch = score_input_feature_channels(input_features)
+    kernel = cfg.kernel_size
+    architecture == :largekernel_rescnn && (kernel = max(kernel, 9))
+    backbone = build_periodic_cnn_score_net(in_ch, SPIN_CHANNELS;
+        base_channels=cfg.base_channels, kernel=kernel, dilations=dilations,
+        repeats=repeats, activation=cfg.activation, normalization=norm)
+    adjusted = ScoreUNetConfig(
+        in_channels=in_ch,
+        base_channels=cfg.base_channels,
+        channel_multipliers=cfg.channel_multipliers,
+        kernel_size=kernel,
+        periodic=cfg.periodic,
+        activation=cfg.activation,
+        final_activation=cfg.final_activation,
+    )
+    input_features == :spin && return DirectSpinScoreNet(backbone), adjusted
+    input_features == :spin_r2 && return DirectSpinR2ScoreNet(backbone), adjusted
+    error("Unsupported score input_features=$(input_features).")
+end
+
 function score_from_dsm_model(model, batch, sigma::Real)
     pred_pos = model(batch)
     pred_neg = model(-batch)
@@ -584,10 +690,45 @@ function score_from_dsm_model(model::DirectSpinR2ScoreUNet, batch, sigma::Real)
     return (pred_pos .- pred_neg) .* eltype(pred_pos)(0.5)
 end
 
+function score_from_dsm_model(model::DirectSpinScoreNet, batch, sigma::Real)
+    pred_pos = model(batch)
+    pred_neg = model(-batch)
+    return (pred_pos .- pred_neg) .* eltype(pred_pos)(0.5)
+end
+
+function score_from_dsm_model(model::DirectSpinR2ScoreNet, batch, sigma::Real)
+    pred_pos = model(batch)
+    pred_neg = model(-batch)
+    return (pred_pos .- pred_neg) .* eltype(pred_pos)(0.5)
+end
+
 function score_from_dsm_model(model::PhysicalFeatureScore, batch, sigma::Real)
     pred_pos = model(batch)
     pred_neg = model(-batch)
     return (pred_pos .- pred_neg) .* eltype(pred_pos)(0.5)
+end
+
+struct CalibratedStationaryScore{M}
+    base_model::M
+    B::Array{Float32, 3}
+    offsets::Vector{Int}
+end
+
+Functors.@functor CalibratedStationaryScore (base_model,)
+
+function score_from_dsm_model(model::CalibratedStationaryScore, batch, sigma::Real)
+    base = score_from_dsm_model(model.base_model, batch, sigma)
+    out = copy(base)
+    N = size(batch, 1)
+    for (ri, r) in enumerate(model.offsets)
+        shifted = batch[mod1.(collect(1:N) .+ r, N), :, :]
+        for c in 1:SPIN_CHANNELS, d in 1:SPIN_CHANNELS
+            coeff = eltype(out)(model.B[c, d, ri])
+            coeff == zero(coeff) && continue
+            @views out[:, c, :] .+= coeff .* shifted[:, d, :]
+        end
+    end
+    return out
 end
 
 function evaluate_score_norm(model, norm_samples::Array{Float32, 3}, sigma::Float32,
@@ -612,6 +753,8 @@ function score_metric_pair(pred, target)
 end
 
 function nvidia_smi_gpu_names()
+    info = nvidia_smi_gpu_info()
+    !isempty(info) && return Dict(k => v[1] for (k, v) in info)
     smi = Sys.which("nvidia-smi")
     smi === nothing && return Dict{Int, String}()
     try
@@ -626,6 +769,27 @@ function nvidia_smi_gpu_names()
         return result
     catch
         return Dict{Int, String}()
+    end
+end
+
+function nvidia_smi_gpu_info()
+    smi = Sys.which("nvidia-smi")
+    smi === nothing && return Dict{Int, Tuple{String, Int}}()
+    try
+        output = read(`$smi --query-gpu=index,pci.bus_id,name --format=csv,noheader`, String)
+        result = Dict{Int, Tuple{String, Int}}()
+        for line in split(chomp(output), '\n')
+            isempty(strip(line)) && continue
+            parts = split(line, ","; limit=3)
+            length(parts) == 3 || continue
+            bus_parts = split(strip(parts[2]), ":")
+            length(bus_parts) >= 2 || continue
+            bus = parse(Int, bus_parts[end - 1]; base=16)
+            result[parse(Int, strip(parts[1]))] = (strip(parts[3]), bus)
+        end
+        return result
+    catch
+        return Dict{Int, Tuple{String, Int}}()
     end
 end
 
@@ -661,7 +825,23 @@ function detect_spin_device(request::AbstractString, required_gpu_name::Abstract
         occursin(lowercase(strip(required_gpu_name)), lowercase(replace(smi_name, " " => ""))) ||
             error("Requested nvidia-smi GPU $(requested) is $(smi_name), not required_gpu_name=$(required_gpu_name).")
     end
-    cuda_id = cuda_ordinal_for_required_name(required_gpu_name)
+    CUDA.has_cuda() || error("CUDA.jl did not expose CUDA devices.")
+    devices = collect(CUDA.devices())
+    needle = lowercase(replace(strip(required_gpu_name), " " => ""))
+    smi_info = nvidia_smi_gpu_info()
+    cuda_id = nothing
+    if haskey(smi_info, requested)
+        smi_name, smi_bus = smi_info[requested]
+        for (idx, dev) in enumerate(devices)
+            name = lowercase(replace(CUDA.name(dev), " " => ""))
+            bus = CUDA.attribute(dev, CUDA.DEVICE_ATTRIBUTE_PCI_BUS_ID)
+            if bus == smi_bus && occursin(needle, name)
+                cuda_id = idx - 1
+                break
+            end
+        end
+    end
+    cuda_id = cuda_id === nothing ? cuda_ordinal_for_required_name(required_gpu_name) : cuda_id
     cuda_id === nothing && error("CUDA.jl did not expose a device matching $(required_gpu_name).")
     return GPUDevice([cuda_id])
 end
@@ -674,10 +854,11 @@ function activate_and_describe_device!(device::ExecutionDevice, requested::Abstr
     compact_name = lowercase(replace(name, " " => ""))
     require_condition(occursin(lowercase(replace(required, " " => "")), compact_name),
         "Selected CUDA device $(id) is $(name), not required_gpu_name=$(required).")
-    smi = nvidia_smi_gpu_names()
+    smi = nvidia_smi_gpu_info()
     smi_idx = nothing
-    for (idx, smi_name) in smi
-        if smi_name == name
+    bus = CUDA.attribute(devices[id + 1], CUDA.DEVICE_ATTRIBUTE_PCI_BUS_ID)
+    for (idx, (smi_name, smi_bus)) in smi
+        if smi_name == name && smi_bus == bus
             smi_idx = idx
             break
         end
@@ -811,15 +992,25 @@ function agreement_metrics(reference::AbstractArray, estimate::AbstractArray)
     return Dict(:relative_rmse => rel, :correlation => corrv)
 end
 
-function save_figure_checked(path::AbstractString, fig::Figure)
-    ensure_parent_dir(path)
-    save(path, fig)
-    @printf("Saved figure to %s\n", path)
-    return nothing
-end
+if !STATEDEP_HEADLESS
+    function save_figure_checked(path::AbstractString, fig::Figure)
+        ensure_parent_dir(path)
+        save(path, fig)
+        @printf("Saved figure to %s\n", path)
+        return nothing
+    end
 
-function figure_title!(fig::Figure, title::AbstractString; subtitle::AbstractString="")
-    Label(fig[0, :], isempty(subtitle) ? title : string(title, "\n", subtitle);
-        fontsize=24, font=:bold, tellwidth=false)
-    return nothing
+    function figure_title!(fig::Figure, title::AbstractString; subtitle::AbstractString="")
+        Label(fig[0, :], isempty(subtitle) ? title : string(title, "\n", subtitle);
+            fontsize=24, font=:bold, tellwidth=false)
+        return nothing
+    end
+else
+    function save_figure_checked(path::AbstractString, fig)
+        error("save_figure_checked requires GLMakie; unset STATEDEP_HEADLESS for figure generation.")
+    end
+
+    function figure_title!(fig, title::AbstractString; subtitle::AbstractString="")
+        error("figure_title! requires GLMakie; unset STATEDEP_HEADLESS for figure generation.")
+    end
 end

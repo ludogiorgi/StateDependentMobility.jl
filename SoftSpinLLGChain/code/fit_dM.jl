@@ -67,6 +67,19 @@ end
 
 Flux.@functor LocalMobilityNN (mlp,)
 
+struct RawFeatureLocalMobilityNN{M,T}
+    mlp::M
+    mean::T
+    std::T
+    feature_mode::Symbol
+    sym_scale::Float32
+    skew_scale::Float32
+    sym_floor::Float32
+end
+
+Flux.@functor RawFeatureLocalMobilityNN
+Flux.trainable(model::RawFeatureLocalMobilityNN) = (; mlp=model.mlp)
+
 struct EquivariantMobilityNN{M,T}
     mlp::M
     mean::T
@@ -85,6 +98,14 @@ struct DMTrainingCache
     rraw::Vector{Array{Float32, 3}}
     obsflat::Vector{Matrix{Float32}}
     npairs::Int
+end
+
+struct TransferredResidualSource{CM,SM}
+    cond_model::CM
+    old_score_model::SM
+    old_stats::DataStats
+    old_sigma::Float32
+    old_score_path::String
 end
 
 function load_dm_config(path::AbstractString)
@@ -141,6 +162,13 @@ function configured_init_bson(cfg_path::AbstractString)
     return String(get(raw["model"], "init_bson", ""))
 end
 
+function configured_init_to_phi(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    model = raw["model"]
+    return Bool(get(model, "init_to_phi", false)),
+        Float64(get(model, "init_to_phi_final_weight_scale", 0.01))
+end
+
 function configured_cond_score_config(cfg_path::AbstractString)
     raw = TOML.parsefile(cfg_path)
     return String(get(raw["data"], "cond_score_config", "cond_score_gpu0_vA.toml"))
@@ -161,20 +189,117 @@ function configured_target_scale_source(cfg_path::AbstractString)
     return Symbol(lowercase(String(get(raw["targets"], "scale_source", "retained_channel_rms"))))
 end
 
+function configured_basis_target_bson(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    return String(get(raw["targets"], "basis_target_bson", ""))
+end
+
+function configured_legacy_selected_indices(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    return Bool(get(raw["targets"], "legacy_selected_indices", false))
+end
+
+function configured_scoreproxy_basis_replacements(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    return Bool(get(raw["targets"], "scoreproxy_basis_replacements", false))
+end
+
+function configured_score_radial_scale(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    return Float64(get(raw["targets"], "score_radial_scale", 1.0))
+end
+
+function configured_orthogonalize_radial_basis(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    return Bool(get(raw["targets"], "orthogonalize_radial_basis", false))
+end
+
+function configured_radial_basis_samples(cfg_path::AbstractString, fallback::Int)
+    raw = TOML.parsefile(cfg_path)
+    return Int(get(raw["targets"], "radial_basis_samples", fallback))
+end
+
+function configured_residual_delta_gain(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    train = raw["training"]
+    return Float64(get(train, "residual_delta_gain", 1.0))
+end
+
+function configured_phi_residual_sign(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    train = raw["training"]
+    sign = Float32(get(train, "phi_residual_sign", 1.0))
+    sign == 1f0 || sign == -1f0 ||
+        error("training.phi_residual_sign must be +1 or -1, got $(sign).")
+    return sign
+end
+
+function configured_operator_sign(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    train = raw["training"]
+    sign = Float32(get(train, "operator_sign", -1.0))
+    sign == 1f0 || sign == -1f0 ||
+        error("training.operator_sign must be +1 or -1, got $(sign).")
+    return sign
+end
+
+function target_group_index_matrix(target)
+    haskey(target, :group_index_matrix) || return nothing
+    return Matrix{Int}(target[:group_index_matrix])
+end
+
+function select_prediction_entries(mat, selected_indices, group_index_matrix)
+    if group_index_matrix === nothing
+        return mat[selected_indices]
+    end
+    flat = vec(mat)
+    grouped = flat[group_index_matrix]
+    return vec(mean(grouped; dims=1))
+end
+
+function configured_prediction_anchor(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    train = raw["training"]
+    path = String(get(train, "prediction_anchor_bson", ""))
+    weight = Float64(get(train, "prediction_anchor_weight", 0.0))
+    max_channel = Int(get(train, "prediction_anchor_max_channel_id", 0))
+    return path, weight, max_channel
+end
+
+function configured_skip_true_m_diagnostics(cfg_path::AbstractString)
+    raw = TOML.parsefile(cfg_path)
+    run = raw["run"]
+    return Bool(get(run, "skip_true_m_diagnostics", false))
+end
+
 function load_transition_source(cond_kind::Symbol, cfg_path::AbstractString,
         cond_path::AbstractString, base::AbstractString, device::ExecutionDevice)
     cond_cfg_path = resolve_path(base, configured_cond_score_config(cfg_path))
-    if cond_kind in (:conditional_residual, :cond_score, :residual)
+    if cond_kind in (:conditional_residual, :cond_score, :residual, :transferred_residual)
         cond_cfg = load_config(cond_cfg_path)
     elseif cond_kind == :joint_score
         cond_cfg = load_joint_config(cond_cfg_path)
     else
-        error("Unsupported cond_score_kind=$(cond_kind). Use conditional_residual or joint_score.")
+        error("Unsupported cond_score_kind=$(cond_kind). Use conditional_residual, transferred_residual, or joint_score.")
     end
     cond_blob = BSON.load(cond_path)
     cond_model = move_model(cond_blob[:host_model], device)
     Flux.testmode!(cond_model)
+    if cond_kind == :transferred_residual
+        cond_base = dirname(cond_cfg_path)
+        old_score_path = resolve_path(cond_base, cond_cfg.score_bson)
+        old_score_model, old_stats, old_sigma, _ =
+            load_stationary_checkpoint(old_score_path, device)
+        return TransferredResidualSource(cond_model, old_score_model, old_stats,
+            old_sigma, old_score_path), cond_cfg
+    end
     return cond_model, cond_cfg
+end
+
+function raw_score_to_normalized(score_raw::Array{Float32, 3}, stats::DataStats)
+    std_tensor = reshape(permutedims(stats.std, (2, 1)), size(score_raw, 1),
+        size(score_raw, 2), 1)
+    return score_raw .* std_tensor
 end
 
 function evaluate_transition_norm(cond_kind::Symbol, cond_model, x0, xt, tau_norm,
@@ -183,6 +308,19 @@ function evaluate_transition_norm(cond_kind::Symbol, cond_model, x0, xt, tau_nor
     if cond_kind in (:conditional_residual, :cond_score, :residual)
         return evaluate_residual_norm(cond_model, x0, xt, tau_norm, stats, cond_params, device;
             batch_size=batch_size, score_model=score_model, score_sigma=score_sigma)
+    elseif cond_kind == :transferred_residual
+        source = cond_model::TransferredResidualSource
+        score_model === nothing &&
+            error("transferred_residual requires the new branch stationary score model.")
+        rnorm_old = evaluate_residual_norm(source.cond_model, x0, xt, tau_norm,
+            source.old_stats, cond_params, device; batch_size=batch_size,
+            score_model=source.old_score_model, score_sigma=source.old_sigma)
+        rraw_old = normalized_residual_to_raw(rnorm_old, source.old_stats)
+        sold_raw = evaluate_raw_score_local(source.old_score_model, x0,
+            source.old_stats, source.old_sigma, device; batch_size=batch_size)
+        snew_raw = evaluate_raw_score_local(score_model, x0, stats, score_sigma,
+            device; batch_size=batch_size)
+        return raw_score_to_normalized(rraw_old .+ sold_raw .- snew_raw, stats)
     elseif cond_kind == :joint_score
         return evaluate_joint_transition_norm(cond_model, x0, xt, tau_norm, stats, cond_params, device;
             batch_size=batch_size, score_model=score_model, score_sigma=score_sigma)
@@ -192,8 +330,17 @@ end
 
 function load_retained_channels(path::AbstractString)
     parsed = TOML.parsefile(path)
-    raw_channels = get(parsed, "channels", Any[])
     channels = RetainedChannel[]
+    expanded = get(parsed, "expanded_score_terms", Dict{String, Any}())
+    if Bool(get(expanded, "enabled", false))
+        families = String.(get(expanded, "families", collect(EXPANDED_SCORE_TERM_PREFIXES)))
+        data_rms = Float64(get(expanded, "data_rms", 1.0))
+        for fam in families, comp in COMP_NAMES, target in COMP_NAMES
+            tindex = findfirst(==(target), ["mx", "my", "mz"])
+            push!(channels, RetainedChannel("$(fam)_$(comp)", tindex, data_rms))
+        end
+    end
+    raw_channels = get(parsed, "channels", Any[])
     for ch in raw_channels
         target = String(ch["target_component"])
         tindex = findfirst(==(target), ["mx", "my", "mz"])
@@ -214,7 +361,7 @@ function selected_linear_indices(channels::Vector{RetainedChannel}, obs_index::D
         a = obs_index[ch.observable]
         c = ch.target_component
         for i in 1:N, j in 1:N
-            row = (i - 1) * length(obs_index) + a
+            row = i + (a - 1) * N
             col = (j - 1) * 3 + c
             push!(inds, row + (col - 1) * (N * length(obs_index)))
             push!(channel_ids, cid)
@@ -223,31 +370,162 @@ function selected_linear_indices(channels::Vector{RetainedChannel}, obs_index::D
     return inds, channel_ids
 end
 
-function build_mobility_model(cfg::DMConfig, rng::AbstractRNG, stats::Union{Nothing, DataStats}=nothing)
-    feature_dim = cfg.feature_mode == :local ? 3 :
-        cfg.feature_mode == :local_r2 ? 4 :
-        cfg.feature_mode == :neighbor ? 9 :
-        cfg.feature_mode == :neighbor_r2 ? 10 :
-        cfg.feature_mode == :neighbor_all_r2 ? 12 :
-        cfg.feature_mode == :equivariant_r2 ? 1 :
-        error("Unknown feature_mode $(cfg.feature_mode)")
-    output_dim = cfg.feature_mode == :equivariant_r2 ? 3 : 9
-    layers = Any[Dense(feature_dim => cfg.hidden_width, swish)]
-    for _ in 2:cfg.hidden_depth
-        push!(layers, Dense(cfg.hidden_width => cfg.hidden_width, swish))
+function selected_linear_indices_legacy(channels::Vector{RetainedChannel},
+        obs_index::Dict{String, Int}, N::Int)
+    inds = Int[]
+    channel_ids = Int[]
+    nobs = length(obs_index)
+    for (cid, ch) in enumerate(channels)
+        a = obs_index[ch.observable]
+        c = ch.target_component
+        for i in 1:N, j in 1:N
+            row = (i - 1) * nobs + a
+            col = (j - 1) * 3 + c
+            push!(inds, row + (col - 1) * (N * nobs))
+            push!(channel_ids, cid)
+        end
     end
-    push!(layers, Dense(cfg.hidden_width => output_dim))
+    return inds, channel_ids
+end
+
+function replace_scoreproxy_basis_names(names::Vector{String})
+    return [name == "mx_Uloc" ? "mx_score_radial" :
+            name == "mz_Uloc" ? "mz_score_radial" :
+            name == "Uloc2" ? "score_radial2" :
+            name for name in names]
+end
+
+function target_basis_names(channels::Vector{RetainedChannel}, cfg_path::AbstractString,
+        base::AbstractString)
+    basis_target = configured_basis_target_bson(cfg_path)
+    isempty(strip(basis_target)) && return unique_observable_names(channels)
+    basis_blob = BSON.load(resolve_path(base, basis_target))
+    names = String.(basis_blob[:names])
+    configured_scoreproxy_basis_replacements(cfg_path) &&
+        (names = replace_scoreproxy_basis_names(names))
+    length(unique(names)) == length(names) ||
+        error("Configured target basis contains duplicate names after replacement.")
+    return names
+end
+
+function target_nonlinear_library(target)
+    scale = haskey(target, :score_radial_scale) ? Float64(target[:score_radial_scale]) : 1.0
+    radial_basis = haskey(target, :expanded_radial_basis) ?
+        Matrix{Float64}(target[:expanded_radial_basis]) : default_radial_basis()
+    return NonlinearLibrary(Vector{String}(target[:names]), scale, radial_basis)
+end
+
+function build_mobility_model(cfg::DMConfig, rng::AbstractRNG, stats::Union{Nothing, DataStats}=nothing)
+    base_mode = base_feature_mode(cfg.feature_mode)
+    feature_dim = base_mode == :local ? 3 :
+        base_mode == :local_r2 ? 4 :
+        base_mode == :neighbor ? 9 :
+        base_mode == :neighbor_r2 ? 10 :
+        base_mode == :neighbor_all_r2 ? 12 :
+        base_mode == :neighbor_raw_r2 ? 10 :
+        base_mode == :neighbor_raw_all_r2 ? 12 :
+        base_mode == :equivariant_r2 ? 1 :
+        error("Unknown feature_mode $(cfg.feature_mode)")
+    output_dim = base_mode == :equivariant_r2 ? 3 : 9
+    init = Flux.glorot_uniform(rng)
+    layers = Any[Dense(feature_dim => cfg.hidden_width, swish; init=init)]
+    for _ in 2:cfg.hidden_depth
+        push!(layers, Dense(cfg.hidden_width => cfg.hidden_width, swish; init=init))
+    end
+    push!(layers, Dense(cfg.hidden_width => output_dim; init=init))
     model = Chain(layers...)
-    if cfg.feature_mode == :equivariant_r2
+    if base_mode == :equivariant_r2
         stats === nothing && error("equivariant_r2 mobility model requires normalization statistics.")
         mean = Float32.(stats.mean)
         std = Float32.(stats.std)
         return EquivariantMobilityNN(model, mean, std, cfg.sym_scale, cfg.skew_scale, cfg.sym_floor)
+    elseif base_mode == :neighbor_raw_r2 || base_mode == :neighbor_raw_all_r2
+        stats === nothing && error("$(cfg.feature_mode) mobility model requires normalization statistics.")
+        mean = Float32.(stats.mean)
+        std = Float32.(stats.std)
+        return RawFeatureLocalMobilityNN(model, mean, std, cfg.feature_mode,
+            cfg.sym_scale, cfg.skew_scale, cfg.sym_floor)
     end
     return LocalMobilityNN(model, cfg.feature_mode, cfg.sym_scale, cfg.skew_scale, cfg.sym_floor)
 end
 
+function base_feature_mode(mode::Symbol)
+    mode == :local_parity && return :local
+    mode == :local_r2_parity && return :local_r2
+    mode == :neighbor_parity && return :neighbor
+    mode == :neighbor_r2_parity && return :neighbor_r2
+    mode == :neighbor_all_r2_parity && return :neighbor_all_r2
+    mode == :neighbor_raw_r2_parity && return :neighbor_raw_r2
+    mode == :neighbor_raw_all_r2_parity && return :neighbor_raw_all_r2
+    return mode
+end
+
+parity_symmetrized_mode(mode::Symbol) =
+    mode == :local_parity ||
+    mode == :local_r2_parity ||
+    mode == :neighbor_parity ||
+    mode == :neighbor_r2_parity ||
+    mode == :neighbor_all_r2_parity ||
+    mode == :neighbor_raw_r2_parity ||
+    mode == :neighbor_raw_all_r2_parity
+
+function invsoftplus_positive(x::Float64)
+    x > 0 || return -30.0
+    x > 20 ? x : log(expm1(x))
+end
+
+function phi_baseline_output_bias(phi_block::AbstractMatrix{<:Real},
+        sym_scale::Real, skew_scale::Real, sym_floor::Real)
+    Phi = Matrix{Float64}(phi_block)
+    S = 0.5 .* (Phi .+ transpose(Phi))
+    es = eigen(Symmetric(S))
+    vals = max.(es.values, 1e-8)
+    Spsd = es.vectors * Diagonal(vals) * transpose(es.vectors)
+    L = cholesky(Symmetric(Spsd); check=false).L
+    ss = Float64(sym_scale)
+    ks = Float64(skew_scale)
+    fl = Float64(sym_floor)
+    require_condition(ss > 0, "sym_scale must be positive for init_to_phi.")
+    require_condition(ks > 0, "skew_scale must be positive for init_to_phi.")
+    b = zeros(Float32, 9)
+    b[1] = Float32(invsoftplus_positive((L[1, 1] - fl) / ss))
+    b[2] = Float32(L[2, 1] / ss)
+    b[3] = Float32(invsoftplus_positive((L[2, 2] - fl) / ss))
+    b[4] = Float32(L[3, 1] / ss)
+    b[5] = Float32(L[3, 2] / ss)
+    b[6] = Float32(invsoftplus_positive((L[3, 3] - fl) / ss))
+    b[7] = Float32((Phi[3, 2] - Phi[2, 3]) / (2 * ks))
+    b[8] = Float32((Phi[1, 3] - Phi[3, 1]) / (2 * ks))
+    b[9] = Float32((Phi[2, 1] - Phi[1, 2]) / (2 * ks))
+    return b
+end
+
+function initialize_local_model_to_phi!(model::LocalMobilityNN,
+        phi_block::AbstractMatrix{<:Real}; final_weight_scale::Real=0.01)
+    last_layer = model.mlp.layers[end]
+    require_condition(size(last_layer.weight, 1) == 9,
+        "init_to_phi requires a 9-output local mobility model.")
+    bias = phi_baseline_output_bias(phi_block, model.sym_scale, model.skew_scale,
+        model.sym_floor)
+    last_layer.weight .*= Float32(final_weight_scale)
+    last_layer.bias .= bias
+    return model
+end
+
+function initialize_local_model_to_phi!(model::RawFeatureLocalMobilityNN,
+        phi_block::AbstractMatrix{<:Real}; final_weight_scale::Real=0.01)
+    last_layer = model.mlp.layers[end]
+    require_condition(size(last_layer.weight, 1) == 9,
+        "init_to_phi requires a 9-output local mobility model.")
+    bias = phi_baseline_output_bias(phi_block, model.sym_scale, model.skew_scale,
+        model.sym_floor)
+    last_layer.weight .*= Float32(final_weight_scale)
+    last_layer.bias .= bias
+    return model
+end
+
 function feature_tensor(xn, mode::Symbol)
+    mode = base_feature_mode(mode)
     if mode == :local
         return xn
     elseif mode == :local_r2
@@ -274,15 +552,37 @@ function feature_tensor(xn, mode::Symbol)
     end
 end
 
-function block_params(model::LocalMobilityNN, xn)
-    N, _, B = size(xn)
-    feats = feature_tensor(xn, model.feature_mode)
-    F = size(feats, 2)
-    flat = reshape(permutedims(feats, (2, 1, 3)), F, N * B)
-    y = model.mlp(flat)
-    sscale = eltype(y)(model.sym_scale)
-    kscale = eltype(y)(model.skew_scale)
-    floor = eltype(y)(model.sym_floor)
+function raw_from_local_stats(xn, mean, std)
+    N, C, _ = size(xn)
+    mean_tensor = reshape(permutedims(mean, (2, 1)), N, C, 1)
+    std_tensor = reshape(permutedims(std, (2, 1)), N, C, 1)
+    return xn .* std_tensor .+ mean_tensor
+end
+
+function raw_feature_tensor(xn, mean, std, mode::Symbol)
+    mode = base_feature_mode(mode)
+    raw = raw_from_local_stats(xn, mean, std)
+    if mode == :neighbor_raw_r2
+        xm = circshift(raw, (1, 0, 0))
+        xp = circshift(raw, (-1, 0, 0))
+        r2 = sum(abs2, raw; dims=2)
+        return cat(xm, raw, xp, r2; dims=2)
+    elseif mode == :neighbor_raw_all_r2
+        xm = circshift(raw, (1, 0, 0))
+        xp = circshift(raw, (-1, 0, 0))
+        r2m = sum(abs2, xm; dims=2)
+        r2 = sum(abs2, raw; dims=2)
+        r2p = sum(abs2, xp; dims=2)
+        return cat(xm, raw, xp, r2m, r2, r2p; dims=2)
+    else
+        error("Unknown raw feature mode $(mode)")
+    end
+end
+
+function local_output_blocks(y, sym_scale, skew_scale, sym_floor)
+    sscale = eltype(y)(sym_scale)
+    kscale = eltype(y)(skew_scale)
+    floor = eltype(y)(sym_floor)
     l11 = NNlib.softplus.(y[1, :]) .* sscale .+ floor
     l21 = y[2, :] .* sscale
     l22 = NNlib.softplus.(y[3, :]) .* sscale .+ floor
@@ -292,7 +592,87 @@ function block_params(model::LocalMobilityNN, xn)
     k1 = y[7, :] .* kscale
     k2 = y[8, :] .* kscale
     k3 = y[9, :] .* kscale
+    s11 = l11 .* l11
+    s12 = l11 .* l21
+    s13 = l11 .* l31
+    s22 = l21 .* l21 .+ l22 .* l22
+    s23 = l21 .* l31 .+ l22 .* l32
+    s33 = l31 .* l31 .+ l32 .* l32 .+ l33 .* l33
+    return (; s11, s12, s13, s22, s23, s33, k1, k2, k3)
+end
+
+function cholesky_block_params_from_blocks(N, B, s11, s12, s13, s22, s23, s33, k1, k2, k3)
+    tiny = eltype(s11)(1f-8)
+    l11 = sqrt.(max.(s11, tiny))
+    l21 = s12 ./ l11
+    l31 = s13 ./ l11
+    rem22 = s22 .- l21 .* l21
+    l22 = sqrt.(max.(rem22, tiny))
+    l32 = (s23 .- l21 .* l31) ./ l22
+    rem33 = s33 .- l31 .* l31 .- l32 .* l32
+    l33 = sqrt.(max.(rem33, tiny))
     return (; N, B, l11, l21, l22, l31, l32, l33, k1, k2, k3)
+end
+
+function block_params(model::LocalMobilityNN, xn; skew_gain=1.0)
+    N, _, B = size(xn)
+    feats = feature_tensor(xn, model.feature_mode)
+    F = size(feats, 2)
+    flat = reshape(permutedims(feats, (2, 1, 3)), F, N * B)
+    yp = model.mlp(flat)
+    bp = local_output_blocks(yp, model.sym_scale, model.skew_scale, model.sym_floor)
+    if parity_symmetrized_mode(model.feature_mode)
+        feats_m = feature_tensor(-xn, model.feature_mode)
+        flat_m = reshape(permutedims(feats_m, (2, 1, 3)), F, N * B)
+        ym = model.mlp(flat_m)
+        bm = local_output_blocks(ym, model.sym_scale, model.skew_scale, model.sym_floor)
+        half = eltype(yp)(0.5)
+        bpout = cholesky_block_params_from_blocks(N, B,
+            half .* (bp.s11 .+ bm.s11),
+            half .* (bp.s12 .+ bm.s12),
+            half .* (bp.s13 .+ bm.s13),
+            half .* (bp.s22 .+ bm.s22),
+            half .* (bp.s23 .+ bm.s23),
+            half .* (bp.s33 .+ bm.s33),
+            half .* (bp.k1 .- bm.k1) .* eltype(yp)(skew_gain),
+            half .* (bp.k2 .- bm.k2) .* eltype(yp)(skew_gain),
+            half .* (bp.k3 .- bm.k3) .* eltype(yp)(skew_gain))
+        return bpout
+    end
+    return cholesky_block_params_from_blocks(N, B,
+        bp.s11, bp.s12, bp.s13, bp.s22, bp.s23, bp.s33,
+        bp.k1 .* eltype(yp)(skew_gain), bp.k2 .* eltype(yp)(skew_gain),
+        bp.k3 .* eltype(yp)(skew_gain))
+end
+
+function block_params(model::RawFeatureLocalMobilityNN, xn; skew_gain=1.0)
+    N, _, B = size(xn)
+    feats = raw_feature_tensor(xn, model.mean, model.std, model.feature_mode)
+    F = size(feats, 2)
+    flat = reshape(permutedims(feats, (2, 1, 3)), F, N * B)
+    yp = model.mlp(flat)
+    bp = local_output_blocks(yp, model.sym_scale, model.skew_scale, model.sym_floor)
+    if parity_symmetrized_mode(model.feature_mode)
+        feats_m = raw_feature_tensor(-xn, model.mean, model.std, model.feature_mode)
+        flat_m = reshape(permutedims(feats_m, (2, 1, 3)), F, N * B)
+        ym = model.mlp(flat_m)
+        bm = local_output_blocks(ym, model.sym_scale, model.skew_scale, model.sym_floor)
+        half = eltype(yp)(0.5)
+        return cholesky_block_params_from_blocks(N, B,
+            half .* (bp.s11 .+ bm.s11),
+            half .* (bp.s12 .+ bm.s12),
+            half .* (bp.s13 .+ bm.s13),
+            half .* (bp.s22 .+ bm.s22),
+            half .* (bp.s23 .+ bm.s23),
+            half .* (bp.s33 .+ bm.s33),
+            half .* (bp.k1 .- bm.k1) .* eltype(yp)(skew_gain),
+            half .* (bp.k2 .- bm.k2) .* eltype(yp)(skew_gain),
+            half .* (bp.k3 .- bm.k3) .* eltype(yp)(skew_gain))
+    end
+    return cholesky_block_params_from_blocks(N, B,
+        bp.s11, bp.s12, bp.s13, bp.s22, bp.s23, bp.s33,
+        bp.k1 .* eltype(yp)(skew_gain), bp.k2 .* eltype(yp)(skew_gain),
+        bp.k3 .* eltype(yp)(skew_gain))
 end
 
 function raw_from_normalized(model::EquivariantMobilityNN, xn)
@@ -406,6 +786,30 @@ function sample_raw_states_cond(sampler::CondPairSampler, nsamples::Int, rng::Ab
     return raw
 end
 
+function estimate_radial_polynomial_basis(sampler::CondPairSampler,
+        nsamples::Int, rng::AbstractRNG)
+    raw = sample_raw_states_cond(sampler, nsamples, rng)
+    r2 = vec(Float64.(sum(abs2, raw; dims=2)))
+    monomials = [ones(Float64, length(r2)) r2 r2 .^ 2]
+    coeffs = zeros(Float64, 3, 3)
+    orth = Vector{Vector{Float64}}()
+    for k in 1:3
+        v = copy(@view monomials[:, k])
+        c = zeros(Float64, 3)
+        c[k] = 1.0
+        for j in 1:length(orth)
+            proj = mean(v .* orth[j])
+            v .-= proj .* orth[j]
+            c .-= proj .* coeffs[j, :]
+        end
+        nrm = sqrt(mean(abs2, v))
+        nrm > 1e-10 || error("Degenerate empirical radial polynomial basis at order $(k).")
+        coeffs[k, :] .= c ./ nrm
+        push!(orth, v ./ nrm)
+    end
+    return coeffs
+end
+
 function evaluate_raw_score_local(model, raw::Array{Float32, 3}, stats::DataStats,
         sigma::Float32, device::ExecutionDevice; batch_size::Int)
     normed = apply_stats_tensor(raw, stats)
@@ -427,12 +831,32 @@ function prepare_dm_targets(cfg::DMConfig, base::AbstractString, device::Executi
     phi_blob = BSON.load(phi_path)
     Phi = Matrix{Float64}(phi_blob[:Phi])
     channels = load_retained_channels(retained_path)
-    names = unique_observable_names(channels)
-    lib = NonlinearLibrary(names)
+    names = target_basis_names(channels, cfg_path, base)
+    radial_basis = if configured_orthogonalize_radial_basis(cfg_path) &&
+            any(name -> startswith(name, "mc_rb"), names)
+        ns = configured_radial_basis_samples(cfg_path, cfg.target_mean_samples)
+        rb = estimate_radial_polynomial_basis(sampler, ns, MersenneTwister(cfg.seed + 10))
+        @printf("Estimated empirical radial polynomial basis from %d snapshot draws.\n", ns)
+        for k in 1:3
+            @printf("  b%d(r2) = %.8g + %.8g r2 + %.8g r2^2\n",
+                k - 1, rb[k, 1], rb[k, 2], rb[k, 3])
+        end
+        rb
+    else
+        default_radial_basis()
+    end
+    lib = NonlinearLibrary(names, configured_score_radial_scale(cfg_path), radial_basis)
+    use_score_proxy = requires_score_proxy(lib)
     obs_index = Dict(name => i for (i, name) in enumerate(names))
-    selected_inds, selected_channel_ids = selected_linear_indices(channels, obs_index, sampler.N)
+    missing_channels = [ch.observable for ch in channels if !haskey(obs_index, ch.observable)]
+    isempty(missing_channels) ||
+        error("Retained channels missing from configured basis names: $(join(unique(missing_channels), ", "))")
+    selected_inds, selected_channel_ids = configured_legacy_selected_indices(cfg_path) ?
+        selected_linear_indices_legacy(channels, obs_index, sampler.N) :
+        selected_linear_indices(channels, obs_index, sampler.N)
     means = estimate_nonlinear_means(sampler, p, lib, cfg.target_mean_samples,
-        MersenneTwister(cfg.seed + 11))
+        MersenneTwister(cfg.seed + 11); score_model=score_model, stats=stats,
+        score_sigma=score_sigma, device=device, batch_size=4096)
     lags = sampler.lag_steps[1:min(cfg.max_lags, length(sampler.lag_steps))]
     nobs = length(names)
     Cdata = Array{Float64}(undef, length(lags), sampler.N, nobs, sampler.D)
@@ -443,13 +867,22 @@ function prepare_dm_targets(cfg::DMConfig, base::AbstractString, device::Executi
         x0, xt, xp, xm, _ = sample_fixed_lag_window(sampler, lag, cfg.target_pairs_per_lag, rng)
         x0f = Float64.(flatten_batch(x0))
         x0f .-= mu
-        obsp = nonlinear_observables(xp, p, lib)
-        obsm = nonlinear_observables(xm, p, lib)
+        score_xp = use_score_proxy ?
+            evaluate_raw_score_local(score_model, xp, stats, score_sigma, device; batch_size=4096) :
+            nothing
+        score_xm = use_score_proxy ?
+            evaluate_raw_score_local(score_model, xm, stats, score_sigma, device; batch_size=4096) :
+            nothing
+        obsp = nonlinear_observables(xp, p, lib; score_raw=score_xp)
+        obsm = nonlinear_observables(xm, p, lib; score_raw=score_xm)
         deriv = (obsp .- obsm) ./ Float32(2.0 * sampler.save_dt)
         deriv_flat = reshape(deriv, sampler.N * nobs, cfg.target_pairs_per_lag)
         Cdata[li, :, :, :] .= reshape(Matrix{Float64}(deriv_flat) * transpose(x0f) ./ cfg.target_pairs_per_lag,
             sampler.N, nobs, sampler.D)
-        obs = nonlinear_observables(xt, p, lib)
+        score_xt = use_score_proxy ?
+            evaluate_raw_score_local(score_model, xt, stats, score_sigma, device; batch_size=4096) :
+            nothing
+        obs = nonlinear_observables(xt, p, lib; score_raw=score_xt)
         center_observables!(obs, means)
         obs_flat = reshape(obs, sampler.N * nobs, cfg.target_pairs_per_lag)
         sraw = evaluate_raw_score_local(score_model, x0, stats, score_sigma, device; batch_size=4096)
@@ -458,6 +891,7 @@ function prepare_dm_targets(cfg::DMConfig, base::AbstractString, device::Executi
             sampler.N, nobs, sampler.D)
         @printf("Prepared dM target lag %.5g (%d/%d), %d observables, %d pairs\n",
             lag * sampler.save_dt, li, length(lags), nobs, cfg.target_pairs_per_lag)
+        flush(stdout)
     end
     A_target = Cdata .- Cphi
     target_vec = Array{Float32}(undef, length(lags), length(selected_inds))
@@ -496,7 +930,13 @@ function prepare_dm_targets(cfg::DMConfig, base::AbstractString, device::Executi
         :Phi => Matrix{Float32}(Phi), :Phi_block => Phi_block,
         :scale_source => scale_source,
         :save_dt => sampler.save_dt, :N => sampler.N, :D => sampler.D,
-        :no_cheating_audit => "Cdot_data was estimated from trajectory finite differences. Cdot_phi used learned stationary score and data-only Phi. True mobility was not used in these targets."))
+        :basis_target_bson => configured_basis_target_bson(cfg_path),
+        :legacy_selected_indices => configured_legacy_selected_indices(cfg_path),
+        :score_radial_scale => Float64(lib.score_radial_scale),
+        :expanded_radial_basis => Float64.(radial_basis),
+        :expanded_radial_basis_orthogonalized => configured_orthogonalize_radial_basis(cfg_path),
+        :uses_learned_score_proxy_observables => use_score_proxy,
+        :no_cheating_audit => "Cdot_data was estimated from trajectory finite differences. Cdot_phi used learned stationary score and data-only Phi. If score-proxy observables are present, they are evaluated with the learned stationary score checkpoint only. True mobility, true potential, analytic score, simulator coefficients, and analytic generator information were not used in these targets."))
     @printf("Saved dM target artifact to %s\n", out_path)
     return BSON.load(out_path)
 end
@@ -515,14 +955,19 @@ function load_or_prepare_targets(cfg::DMConfig, base::AbstractString, device::Ex
 end
 
 function selected_prediction(model, x0, xt, tau_norm, score_model, stats, score_sigma,
-        cond_model, cond_params, cond_kind::Symbol, target, p, cfg, device)
-    lib = NonlinearLibrary(Vector{String}(target[:names]))
+        cond_model, cond_params, cond_kind::Symbol, target, p, cfg, device;
+        delta_gain::Real=1.0, operator_sign::Real=-1.0,
+        phi_residual_sign::Real=1.0)
+    lib = target_nonlinear_library(target)
     means = Vector{Float64}(target[:observable_means])
     B = size(x0, 3)
     rnorm = evaluate_transition_norm(cond_kind, cond_model, x0, xt, tau_norm, stats, cond_params, device;
         batch_size=min(cond_params.batch_size, B), score_model=score_model, score_sigma=score_sigma)
     rraw = normalized_residual_to_raw(rnorm, stats)
-    obs = nonlinear_observables(xt, p, lib)
+    score_xt = requires_score_proxy(lib) ?
+        evaluate_raw_score_local(score_model, xt, stats, score_sigma, device; batch_size=4096) :
+        nothing
+    obs = nonlinear_observables(xt, p, lib; score_raw=score_xt)
     center_observables!(obs, means)
     obs_dev = move_array(reshape(obs, size(obs, 1) * size(obs, 2), B), device)
     r_dev = move_array(rraw, device)
@@ -531,31 +976,40 @@ function selected_prediction(model, x0, xt, tau_norm, score_model, stats, score_
     phi = move_array(Matrix{Float32}(target[:Phi]), device)
     phi_action = phi' * reshape(permutedims(r_dev, (2, 1, 3)), size(phi, 1), B)
     model_flat = reshape(permutedims(model_action, (2, 1, 3)), size(phi, 1), B)
-    delta_action = model_flat .- phi_action
-    mat = -(obs_dev * transpose(delta_action)) ./ eltype(delta_action)(B)
+    delta_action = eltype(model_flat)(delta_gain) .*
+        (model_flat .- eltype(model_flat)(phi_residual_sign) .* phi_action)
+    mat = eltype(delta_action)(operator_sign) .*
+        (obs_dev * transpose(delta_action)) ./ eltype(delta_action)(B)
     sel = target[:selected_indices]
-    return mat[sel]
+    return select_prediction_entries(mat, sel, target_group_index_matrix(target))
 end
 
-function selected_prediction_precomputed(model, x0n_dev, r_dev, obs_dev, phi_dev, selected_indices)
+function selected_prediction_precomputed(model, x0n_dev, r_dev, obs_dev, phi_dev,
+        selected_indices; delta_gain::Real=1.0, operator_sign::Real=-1.0,
+        group_index_matrix=nothing, phi_residual_sign::Real=1.0)
     B = size(r_dev, 3)
     model_action = mobility_action(model, x0n_dev, r_dev)
     phi_action = phi_dev' * reshape(permutedims(r_dev, (2, 1, 3)), size(phi_dev, 1), B)
     model_flat = reshape(permutedims(model_action, (2, 1, 3)), size(phi_dev, 1), B)
-    delta_action = model_flat .- phi_action
-    mat = -(obs_dev * transpose(delta_action)) ./ eltype(delta_action)(B)
-    return mat[selected_indices]
+    delta_action = eltype(model_flat)(delta_gain) .*
+        (model_flat .- eltype(model_flat)(phi_residual_sign) .* phi_action)
+    mat = eltype(delta_action)(operator_sign) .*
+        (obs_dev * transpose(delta_action)) ./ eltype(delta_action)(B)
+    return select_prediction_entries(mat, selected_indices, group_index_matrix)
 end
 
 function precompute_batch_inputs(x0, xt, tau_norm, score_model, stats, score_sigma,
         cond_model, cond_params, cond_kind::Symbol, target, p, cfg, device)
-    lib = NonlinearLibrary(Vector{String}(target[:names]))
+    lib = target_nonlinear_library(target)
     means = Vector{Float64}(target[:observable_means])
     B = size(x0, 3)
     rnorm = evaluate_transition_norm(cond_kind, cond_model, x0, xt, tau_norm, stats, cond_params, device;
         batch_size=min(cond_params.batch_size, B), score_model=score_model, score_sigma=score_sigma)
     rraw = normalized_residual_to_raw(rnorm, stats)
-    obs = nonlinear_observables(xt, p, lib)
+    score_xt = requires_score_proxy(lib) ?
+        evaluate_raw_score_local(score_model, xt, stats, score_sigma, device; batch_size=4096) :
+        nothing
+    obs = nonlinear_observables(xt, p, lib; score_raw=score_xt)
     center_observables!(obs, means)
     obs_dev = move_array(reshape(obs, size(obs, 1) * size(obs, 2), B), device)
     r_dev = move_array(rraw, device)
@@ -572,7 +1026,9 @@ function agreement(pred::AbstractVector, target::AbstractVector)
 end
 
 function evaluate_A(model, cfg, sampler, score_model, stats, score_sigma,
-        cond_model, cond_params, cond_kind::Symbol, target, p, device; lag_indices=nothing)
+        cond_model, cond_params, cond_kind::Symbol, target, p, device;
+        lag_indices=nothing, delta_gain::Real=1.0, lag_weights=nothing,
+        operator_sign::Real=-1.0, phi_residual_sign::Real=1.0)
     rng = MersenneTwister(cfg.seed + 700)
     preds = Vector{Float32}[]
     refs = Vector{Float32}[]
@@ -582,9 +1038,17 @@ function evaluate_A(model, cfg, sampler, score_model, stats, score_sigma,
         lag = lags_all[li]
         x0, xt, _, _, tau_norm = sample_fixed_lag_window(sampler, lag, cfg.eval_pairs_per_lag, rng)
         pred = selected_prediction(model, x0, xt, tau_norm, score_model, stats, score_sigma,
-            cond_model, cond_params, cond_kind, target, p, cfg, device)
-        push!(preds, Float32.(Array(pred)))
-        push!(refs, vec(Array{Float32}(target[:target_vec][li, :])))
+            cond_model, cond_params, cond_kind, target, p, cfg, device;
+            delta_gain=delta_gain, operator_sign=operator_sign,
+            phi_residual_sign=phi_residual_sign)
+        if lag_weights === nothing
+            push!(preds, Float32.(Array(pred)))
+            push!(refs, vec(Array{Float32}(target[:target_vec][li, :])))
+        else
+            w = sqrt(Float32(lag_weights[Int(li)]))
+            push!(preds, w .* Float32.(Array(pred)))
+            push!(refs, w .* vec(Array{Float32}(target[:target_vec][li, :])))
+        end
     end
     pred = reduce(vcat, preds)
     ref = reduce(vcat, refs)
@@ -609,6 +1073,73 @@ function configured_cache_pairs(cfg_path::AbstractString)
     return Int(get(train, "cache_pairs_per_lag", 0))
 end
 
+function configured_lag_weights(cfg_path::AbstractString,
+        active_lag_indices::AbstractVector{<:Integer}, target)
+    raw = TOML.parsefile(cfg_path)
+    train = raw["training"]
+    mode = Symbol(lowercase(String(get(train, "lag_weight_mode", "uniform"))))
+    weights = Dict{Int, Float32}()
+    if mode == :uniform
+        for li in active_lag_indices
+            weights[Int(li)] = 1f0
+        end
+        return weights
+    elseif mode == :cosine_taper
+        start_idx = Int(get(train, "lag_weight_taper_start_index", first(active_lag_indices)))
+        end_idx = Int(get(train, "lag_weight_taper_end_index", last(active_lag_indices)))
+        min_weight = Float64(get(train, "lag_weight_min", 0.20))
+        require_condition(0.0 <= min_weight <= 1.0,
+            "lag_weight_min must be in [0, 1], got $(min_weight).")
+        require_condition(start_idx <= end_idx,
+            "lag_weight_taper_start_index must be <= lag_weight_taper_end_index.")
+        for li0 in active_lag_indices
+            li = Int(li0)
+            w = if li <= start_idx
+                1.0
+            elseif li >= end_idx
+                min_weight
+            else
+                a = (li - start_idx) / max(end_idx - start_idx, 1)
+                min_weight + (1.0 - min_weight) * 0.5 * (1.0 + cos(pi * a))
+            end
+            weights[li] = Float32(w)
+        end
+    elseif mode == :exp_tau
+        taus = Vector{Float64}(target[:taus])
+        decay = Float64(get(train, "lag_weight_decay_time", 0.0))
+        min_weight = Float64(get(train, "lag_weight_min", 0.05))
+        require_condition(decay > 0.0,
+            "lag_weight_decay_time must be positive for lag_weight_mode=exp_tau.")
+        require_condition(0.0 <= min_weight <= 1.0,
+            "lag_weight_min must be in [0, 1], got $(min_weight).")
+        tau0 = taus[first(active_lag_indices)]
+        for li0 in active_lag_indices
+            li = Int(li0)
+            weights[li] = Float32(max(min_weight, exp(-(taus[li] - tau0) / decay)))
+        end
+    elseif mode == :linear_tau
+        start_weight = Float64(get(train, "lag_weight_start", 0.5))
+        end_weight = Float64(get(train, "lag_weight_end", 1.5))
+        require_condition(start_weight > 0.0 && end_weight > 0.0,
+            "lag_weight_start and lag_weight_end must be positive for lag_weight_mode=linear_tau.")
+        first_idx = first(active_lag_indices)
+        last_idx = last(active_lag_indices)
+        span = max(last_idx - first_idx, 1)
+        for li0 in active_lag_indices
+            li = Int(li0)
+            a = (li - first_idx) / span
+            weights[li] = Float32((1.0 - a) * start_weight + a * end_weight)
+        end
+    else
+        error("Unsupported training.lag_weight_mode=$(mode). Use uniform, cosine_taper, exp_tau, or linear_tau.")
+    end
+    mean_w = mean(Float64.(collect(values(weights))))
+    for li in keys(weights)
+        weights[li] = Float32(Float64(weights[li]) / max(mean_w, eps(Float64)))
+    end
+    return weights
+end
+
 function build_training_cache(cfg, sampler, score_model, stats, score_sigma,
         cond_model, cond_cfg, cond_kind::Symbol, target, p, device, active_lag_indices, npairs::Int)
     npairs <= 0 && return nothing
@@ -618,7 +1149,7 @@ function build_training_cache(cfg, sampler, score_model, stats, score_sigma,
     rraw_cache = Array{Float32, 3}[]
     obs_cache = Matrix{Float32}[]
     lag_to_cache = Dict{Int, Int}()
-    lib = NonlinearLibrary(Vector{String}(target[:names]))
+    lib = target_nonlinear_library(target)
     means = Vector{Float64}(target[:observable_means])
     for (cache_idx, li) in enumerate(active_lag_indices)
         lag = lags[li]
@@ -627,7 +1158,10 @@ function build_training_cache(cfg, sampler, score_model, stats, score_sigma,
             batch_size=min(cond_cfg.batch_size, npairs), score_model=score_model,
             score_sigma=score_sigma)
         rraw = normalized_residual_to_raw(rnorm, stats)
-        obs = nonlinear_observables(xt, p, lib)
+        score_xt = requires_score_proxy(lib) ?
+            evaluate_raw_score_local(score_model, xt, stats, score_sigma, device; batch_size=4096) :
+            nothing
+        obs = nonlinear_observables(xt, p, lib; score_raw=score_xt)
         center_observables!(obs, means)
         push!(x0n_cache, apply_stats_tensor(x0, stats))
         push!(rraw_cache, rraw)
@@ -635,6 +1169,7 @@ function build_training_cache(cfg, sampler, score_model, stats, score_sigma,
         lag_to_cache[li] = cache_idx
         cfg.verbose && @printf("Cached M-training tensors for lag %.5g (%d/%d), pairs=%d\n",
             lag * sampler.save_dt, cache_idx, length(active_lag_indices), npairs)
+        cfg.verbose && flush(stdout)
         GC.gc()
     end
     return DMTrainingCache(lag_to_cache, x0n_cache, rraw_cache, obs_cache, npairs)
@@ -643,14 +1178,16 @@ end
 function sample_cached_batch(cache::DMTrainingCache, li::Int, batch_pairs::Int,
         rng::AbstractRNG, device::ExecutionDevice)
     ci = cache.lag_to_cache[li]
-    idx = rand(rng, 1:cache.npairs, batch_pairs)
+    idx = batch_pairs >= cache.npairs ? collect(1:cache.npairs) :
+        rand(rng, 1:cache.npairs, batch_pairs)
     x0n_dev = move_array(copy(@view cache.x0n[ci][:, :, idx]), device)
     r_dev = move_array(copy(@view cache.rraw[ci][:, :, idx]), device)
     obs_dev = move_array(copy(@view cache.obsflat[ci][:, idx]), device)
     return x0n_dev, r_dev, obs_dev
 end
 
-function true_mobility_diagnostics(model, cfg, sampler, stats, target, p, device)
+function true_mobility_diagnostics(model, cfg, sampler, stats, target, p, device;
+        delta_gain::Real=1.0)
     raw = sample_raw_states_cond(sampler, 8000, MersenneTwister(cfg.seed + 800))
     xn = move_array(apply_stats_tensor(raw, stats), device)
     bp = block_params(model, xn)
@@ -666,6 +1203,13 @@ function true_mobility_diagnostics(model, cfg, sampler, stats, target, p, device
         K = [0.0 -k3[q] k2[q]; k3[q] 0.0 -k1[q]; -k2[q] k1[q] 0.0]
         pred_blocks[:, :, q] .= S .+ K
     end
+    if delta_gain != 1.0
+        phi_block = Matrix{Float64}(target[:Phi_block])
+        for q in axes(pred_blocks, 3)
+            pred_blocks[:, :, q] .= phi_block .+
+                Float64(delta_gain) .* (pred_blocks[:, :, q] .- phi_block)
+        end
+    end
     N, _, B = size(raw)
     true_blocks = Array{Float64}(undef, 3, 3, N * B)
     for b in 1:B, i in 1:N
@@ -680,6 +1224,13 @@ function true_mobility_diagnostics(model, cfg, sampler, stats, target, p, device
     mean_phi = Matrix{Float64}(target[:Phi_block])
     return (; relative_rmse=rel, correlation=corr, mean_pred, mean_true, mean_phi,
         mean_phi_rel=norm(mean_pred - mean_phi) / max(norm(mean_phi), eps(Float64)))
+end
+
+function skipped_true_mobility_diagnostics(target)
+    phi = Matrix{Float64}(target[:Phi_block])
+    nan_block = fill(NaN, size(phi))
+    return (; relative_rmse=NaN, correlation=NaN, mean_pred=nan_block,
+        mean_true=nan_block, mean_phi=phi, mean_phi_rel=NaN)
 end
 
 function render_dm_figure(path, history, eval_metrics, true_metrics, cfg)
@@ -728,13 +1279,15 @@ function mobility_training_audit(target)
 end
 
 function save_dm_checkpoint(path::AbstractString, model, cfg, history, epoch::Int,
-        eval_metrics; final::Bool=false, audit_message::AbstractString="")
+        eval_metrics; final::Bool=false, audit_message::AbstractString="",
+        delta_gain::Real=1.0)
     ensure_parent_dir(path)
     isempty(audit_message) && (audit_message = "Mobility checkpoint selected only by data-driven A validation error. True M was not used for training or checkpoint selection.")
     BSON.bson(path, Dict(:host_model => Flux.fmap(cpu, model), :cfg => cfg,
         :history => history, :best_epoch => epoch, :eval_metrics => eval_metrics,
         :checkpoint_kind => final ? "final_epoch" : "best_validation",
         :target_artifact => cfg.target_artifact_bson,
+        :residual_delta_gain => Float64(delta_gain),
         :no_cheating_audit => audit_message))
     return path
 end
@@ -756,10 +1309,39 @@ function train_dm(cfg_path::AbstractString)
     @printf("Using conditional transition source kind: %s\n", String(cond_kind))
     target = load_or_prepare_targets(cfg, base, device, cfg_path)
     audit_message = mobility_training_audit(target)
+    if cond_kind == :transferred_residual
+        source = cond_model::TransferredResidualSource
+        @printf("Using transferred residual r_old + s_old - s_new with old score %s\n",
+            source.old_score_path)
+        audit_message *= " Conditional transition source was the frozen transferred residual r_old + s_old - s_new, built from a learned old conditional residual and learned old/new stationary scores only."
+    end
+    residual_delta_gain = configured_residual_delta_gain(cfg_path)
+    operator_sign = configured_operator_sign(cfg_path)
+    if cfg.verbose && residual_delta_gain != 1.0
+        @printf("Using residual delta gain %.6g in A prediction/loss\n", residual_delta_gain)
+    end
+    if cfg.verbose && operator_sign != -1f0
+        @printf("Using mobility residual operator sign %.1f in A prediction/loss\n",
+            Float64(operator_sign))
+    end
     rng = MersenneTwister(cfg.seed)
     init_bson = configured_init_bson(cfg_path)
+    init_to_phi, init_to_phi_final_weight_scale = configured_init_to_phi(cfg_path)
+    !isempty(strip(init_bson)) && init_to_phi &&
+        error("Use either model.init_bson or model.init_to_phi, not both.")
     model = if isempty(strip(init_bson))
-        move_model(build_mobility_model(cfg, rng, stats), device)
+        host_model = build_mobility_model(cfg, rng, stats)
+        if init_to_phi
+            (host_model isa LocalMobilityNN || host_model isa RawFeatureLocalMobilityNN) ||
+                error("model.init_to_phi is implemented only for local 9-output mobility models.")
+            initialize_local_model_to_phi!(host_model, target[:Phi_block];
+                final_weight_scale=init_to_phi_final_weight_scale)
+            @printf("Initialized local mobility model near data-only Phi baseline; final-layer weight scale %.5g\n",
+                init_to_phi_final_weight_scale)
+            audit_message *= @sprintf(" The NN was initialized near the data-only Phi baseline with final-layer weight scale %.5g; no true-model information was used.",
+                init_to_phi_final_weight_scale)
+        end
+        move_model(host_model, device)
     else
         init_path = resolve_path(base, init_bson)
         require_condition(isfile(init_path), "Missing init_bson checkpoint $(init_path)")
@@ -767,9 +1349,24 @@ function train_dm(cfg_path::AbstractString)
         @printf("Warm-starting mobility model from %s\n", init_path)
         move_model(init_blob[:host_model], device)
     end
+    anchor_bson, anchor_weight, anchor_max_channel = configured_prediction_anchor(cfg_path)
+    anchor_model = nothing
+    if anchor_weight > 0
+        require_condition(!isempty(strip(anchor_bson)),
+            "prediction_anchor_weight > 0 requires training.prediction_anchor_bson.")
+        anchor_path = resolve_path(base, anchor_bson)
+        require_condition(isfile(anchor_path), "Missing prediction anchor checkpoint $(anchor_path)")
+        anchor_blob = BSON.load(anchor_path)
+        anchor_model = move_model(anchor_blob[:host_model], device)
+        Flux.testmode!(anchor_model)
+        @printf("Using prediction anchor %s with weight %.6g on channel ids <= %d\n",
+            anchor_path, anchor_weight, anchor_max_channel)
+        audit_message *= @sprintf(" A data-only prediction-anchor penalty uses checkpoint %s with weight %.6g on selected channel ids <= %d.",
+            basename(anchor_path), anchor_weight, anchor_max_channel)
+    end
     opt = Flux.setup(AdamW(cfg.learning_rate, (0.9, 0.999), cfg.weight_decay), model)
     history = Dict(:loss => Float64[], :fit_loss => Float64[], :mean_loss => Float64[],
-        :val_rel => Float64[], :val_corr => Float64[])
+        :anchor_loss => Float64[], :val_rel => Float64[], :val_corr => Float64[])
     out_model = resolve_path(base, cfg.output_bson)
     best_model_host = nothing
     best_epoch = 0
@@ -782,11 +1379,32 @@ function train_dm(cfg_path::AbstractString)
     selected_indices = target[:selected_indices]
     target_vec_dev = move_array(Array{Float32}(target[:target_vec]), device)
     scale_vec = move_array(Array{Float32}(target[:scale_vec]), device)
+    group_index_matrix = target_group_index_matrix(target)
+    group_index_matrix_dev = group_index_matrix === nothing ? nothing :
+        move_array(group_index_matrix, device)
+    if cfg.verbose && group_index_matrix !== nothing
+        @printf("Using translation-averaged grouped target: %d groups, %d entries/group\n",
+            size(group_index_matrix, 2), size(group_index_matrix, 1))
+    end
+    anchor_indices = Int[]
+    if anchor_model !== nothing
+        selected_channel_ids = Int.(target[:selected_channel_ids])
+        anchor_max_channel > 0 || error("prediction_anchor_max_channel_id must be positive when using a prediction anchor.")
+        anchor_indices = findall(cid -> cid <= anchor_max_channel, selected_channel_ids)
+        require_condition(!isempty(anchor_indices),
+            "Prediction anchor selected no equations; check prediction_anchor_max_channel_id.")
+    end
     lags = Vector{Int}(target[:lags])
     active_lag_indices = configured_lag_indices(cfg_path, length(lags))
     if cfg.verbose && active_lag_indices != collect(eachindex(lags))
         @printf("Active mobility-training lag indices: %d:%d of %d\n",
             first(active_lag_indices), last(active_lag_indices), length(lags))
+    end
+    lag_weights = configured_lag_weights(cfg_path, active_lag_indices, target)
+    if cfg.verbose
+        lw_vals = [Float64(lag_weights[Int(li)]) for li in active_lag_indices]
+        @printf("Lag loss weights: min %.5g, max %.5g, first %.5g, last %.5g\n",
+            minimum(lw_vals), maximum(lw_vals), first(lw_vals), last(lw_vals))
     end
     cache_pairs = configured_cache_pairs(cfg_path)
     training_cache = build_training_cache(cfg, sampler, score_model, stats, score_sigma,
@@ -807,14 +1425,25 @@ function train_dm(cfg_path::AbstractString)
                 x0n_dev, r_dev, obs_dev = sample_cached_batch(training_cache, li,
                     cfg.batch_pairs, rng, device)
             end
+            anchor_ref = anchor_model === nothing ? nothing :
+                selected_prediction_precomputed(anchor_model, x0n_dev, r_dev, obs_dev,
+                    phi_dev, selected_indices; delta_gain=residual_delta_gain,
+                    operator_sign=operator_sign, group_index_matrix=group_index_matrix_dev)
             xmean = sample_raw_states_cond(sampler, cfg.mean_penalty_samples, rng)
             xmean_dev = move_array(apply_stats_tensor(xmean, stats), device)
             loss_val, grads = Flux.withgradient(model) do m
-                pred = selected_prediction_precomputed(m, x0n_dev, r_dev, obs_dev, phi_dev, selected_indices)
+                pred = selected_prediction_precomputed(m, x0n_dev, r_dev, obs_dev,
+                    phi_dev, selected_indices; delta_gain=residual_delta_gain,
+                    operator_sign=operator_sign, group_index_matrix=group_index_matrix_dev)
                 ref = @view target_vec_dev[li, :]
-                fit_loss = mean(abs2, (pred .- ref) ./ scale_vec)
+                fit_loss = Float32(lag_weights[Int(li)]) *
+                    mean(abs2, (pred .- ref) ./ scale_vec)
                 mean_loss = mean_block_penalty(m, xmean_dev, phi_vals, phi_block_norm)
-                fit_loss + Float32(cfg.mean_penalty_weight) * mean_loss
+                anchor_loss = anchor_ref === nothing ? 0f0 :
+                    mean(abs2, (pred[anchor_indices] .- anchor_ref[anchor_indices]) ./
+                        scale_vec[anchor_indices])
+                fit_loss + Float32(cfg.mean_penalty_weight) * mean_loss +
+                    Float32(anchor_weight) * anchor_loss
             end
             opt, model = Flux.update!(opt, model, grads[1])
             push!(losses, Float64(to_host(loss_val)))
@@ -822,9 +1451,12 @@ function train_dm(cfg_path::AbstractString)
         push!(history[:loss], mean(losses))
         push!(history[:fit_loss], NaN)
         push!(history[:mean_loss], NaN)
+        push!(history[:anchor_loss], NaN)
         if epoch % cfg.eval_every == 0 || epoch == cfg.epochs
             ev = evaluate_A(model, cfg, sampler, score_model, stats, score_sigma,
-                cond_model, cond_cfg, cond_kind, target, p, device; lag_indices=active_lag_indices)
+                cond_model, cond_cfg, cond_kind, target, p, device;
+                lag_indices=active_lag_indices, delta_gain=residual_delta_gain,
+                lag_weights=lag_weights, operator_sign=operator_sign)
             push!(history[:val_rel], ev.relative_rmse)
             push!(history[:val_corr], ev.correlation)
             @printf("epoch %d: loss %.6e, val A rel %.5f corr %.5f\n",
@@ -835,7 +1467,8 @@ function train_dm(cfg_path::AbstractString)
                 best_eval = ev
                 best_model_host = Flux.fmap(cpu, model)
                 save_dm_checkpoint(best_checkpoint_path(out_model), best_model_host,
-                    cfg, history, best_epoch, best_eval; audit_message)
+                    cfg, history, best_epoch, best_eval; audit_message,
+                    delta_gain=residual_delta_gain)
                 @printf("  saved new best validation checkpoint at epoch %d (rel %.5f)\n",
                     best_epoch, best_rel)
             end
@@ -845,7 +1478,9 @@ function train_dm(cfg_path::AbstractString)
     ProgressMeter.finish!(progress)
     if best_model_host === nothing
         eval_metrics = evaluate_A(model, cfg, sampler, score_model, stats, score_sigma,
-            cond_model, cond_cfg, cond_kind, target, p, device)
+            cond_model, cond_cfg, cond_kind, target, p, device;
+            lag_indices=active_lag_indices, delta_gain=residual_delta_gain,
+            lag_weights=lag_weights, operator_sign=operator_sign)
         best_model_host = Flux.fmap(cpu, model)
         best_eval = eval_metrics
         best_epoch = cfg.epochs
@@ -854,30 +1489,56 @@ function train_dm(cfg_path::AbstractString)
         if best_epoch != cfg.epochs
             save_dm_checkpoint(final_checkpoint_path(out_model), model, cfg, history,
                 cfg.epochs, evaluate_A(model, cfg, sampler, score_model, stats, score_sigma,
-                    cond_model, cond_cfg, cond_kind, target, p, device; lag_indices=active_lag_indices);
-                final=true, audit_message)
+                    cond_model, cond_cfg, cond_kind, target, p, device;
+                    lag_indices=active_lag_indices, delta_gain=residual_delta_gain,
+                    lag_weights=lag_weights, operator_sign=operator_sign);
+                final=true, audit_message, delta_gain=residual_delta_gain)
             model = move_model(best_model_host, device)
         end
     end
-    true_metrics = true_mobility_diagnostics(model, cfg, sampler, stats, target, p, device)
+    skip_true_m = configured_skip_true_m_diagnostics(cfg_path)
+    true_metrics = if skip_true_m
+        @printf("Skipping ex-post true-M diagnostics by run.skip_true_m_diagnostics=true\n")
+        skipped_true_mobility_diagnostics(target)
+    else
+        true_mobility_diagnostics(model, cfg, sampler, stats, target, p, device;
+            delta_gain=residual_delta_gain)
+    end
     ensure_parent_dir(out_model)
     BSON.bson(out_model, Dict(:host_model => best_model_host, :cfg => cfg,
         :history => history, :eval_metrics => eval_metrics,
         :true_metrics => true_metrics, :best_epoch => best_epoch,
         :target_artifact => cfg.target_artifact_bson,
+        :residual_delta_gain => Float64(residual_delta_gain),
         :no_cheating_audit => audit_message * " No Langevin forward validation was run by fit_dM.jl."))
     metrics_path = resolve_path(base, cfg.metrics_txt)
     open(metrics_path, "w") do io
         println(io, "SoftSpinLLGChain Step 3 mobility NN metrics")
         println(io, "config = $(basename(cfg_path))")
         println(io, "feature_mode = $(cfg.feature_mode)")
+        println(io, @sprintf("residual_delta_gain = %.8e", residual_delta_gain))
+        println(io, @sprintf("operator_sign = %.1f", Float64(operator_sign)))
+        if group_index_matrix !== nothing
+            println(io, "target_selection = translation_average_groups")
+            println(io, "target_groups = $(size(group_index_matrix, 2))")
+            println(io, "target_group_size = $(size(group_index_matrix, 1))")
+        else
+            println(io, "target_selection = selected_entries")
+        end
         println(io, "best_epoch = $(best_epoch)")
         println(io, "active_lag_indices = $(first(active_lag_indices)):$(last(active_lag_indices)) / $(length(lags))")
+        train_raw = TOML.parsefile(cfg_path)["training"]
+        println(io, "lag_weight_mode = $(String(get(train_raw, "lag_weight_mode", "uniform")))")
+        println(io, @sprintf("lag_weight_min_used = %.8e",
+            minimum([Float64(lag_weights[Int(li)]) for li in active_lag_indices])))
+        println(io, @sprintf("lag_weight_max_used = %.8e",
+            maximum([Float64(lag_weights[Int(li)]) for li in active_lag_indices])))
         println(io, @sprintf("A validation rel.RMSE = %.8e", eval_metrics.relative_rmse))
         println(io, @sprintf("A validation corr = %.8e", eval_metrics.correlation))
         println(io, @sprintf("true M block rel.RMSE ex-post = %.8e", true_metrics.relative_rmse))
         println(io, @sprintf("true M block corr ex-post = %.8e", true_metrics.correlation))
         println(io, @sprintf("mean M_NN vs Phi onsite rel.RMSE = %.8e", true_metrics.mean_phi_rel))
+        println(io, "true M diagnostics skipped = $(skip_true_m)")
         println(io, "No Langevin equation was run.")
         println(io, "Audit: $(audit_message)")
     end

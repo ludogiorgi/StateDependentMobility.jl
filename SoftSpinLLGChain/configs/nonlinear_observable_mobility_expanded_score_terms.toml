@@ -1,0 +1,27 @@
+# Expanded analytic-score-term observable library for the soft-spin mobility fit.
+# The vector families are:
+#   b0(r2)m, b1(r2)m, b2(r2)m,
+#   u, T u, P u, C u,
+#   a, T a, P a, C a,
+# with u_i = m_{i-1}+m_{i+1}-2m_i and a_i = m_{z,i} e_z.
+# b0,b1,b2 are empirical Gram-Schmidt polynomials in r2, estimated from data
+# by the target-preparation config that uses this retained-channel file.
+
+translation_offsets = "all"
+
+[expanded_score_terms]
+enabled = true
+data_rms = 1.0
+families = [
+  "mc_rb0",
+  "mc_rb1",
+  "mc_rb2",
+  "mc_u",
+  "mc_Tu",
+  "mc_Pu",
+  "mc_Cu",
+  "mc_a",
+  "mc_Ta",
+  "mc_Pa",
+  "mc_Ca",
+]

@@ -1,0 +1,80 @@
+# Parallel 11-family global-scale variant without signal weighting on GPU0.
+
+[data]
+input_hdf5 = "../data/soft_spin_llg_chain.h5"
+score_bson = "../models/score_phys_pC_sigma02.bson"
+cond_score_kind = "conditional_residual"
+cond_score_bson = "../models/cond_score_phys_pC_unet_vA_cont3.bson"
+cond_score_config = "cond_score_phys_pC_unet_gpu2_vA_cont3.toml"
+phi_artifact_bson = "../models/fit_Phi_phys_pC_current_artifacts.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 0.60
+lag_stride = 1
+
+[targets]
+target_kind = "data_only"
+scale_source = "data_channel"
+retained_channels_toml = "../configs/nonlinear_observable_mobility_expanded_score_terms.toml"
+target_artifact_bson = "../models/mobility11/analytic/A_target.bson"
+max_lags = 40
+target_pairs_per_lag = 120000
+target_mean_samples = 180000
+orthogonalize_radial_basis = true
+radial_basis_samples = 180000
+
+[model]
+feature_mode = "neighbor_r2"
+hidden_width = 256
+hidden_depth = 4
+sym_scale = 0.40
+skew_scale = 7.60
+sym_floor = 0.00001
+init_to_phi = true
+init_to_phi_final_weight_scale = 0.01
+
+[training]
+epochs = 100
+batches_per_epoch = 48
+batch_pairs = 8192
+cache_pairs_per_lag = 60000
+learning_rate = 0.00003
+weight_decay = 1.0e-7
+mean_penalty_weight = 0.0
+operator_sign = -1.0
+phi_residual_sign = 1.0
+mean_penalty_samples = 4096
+eval_pairs_per_lag = 60000
+eval_every = 5
+first_lag_index = 7
+last_lag_index = 24
+lag_weight_mode = "uniform"
+seed = 2026060452
+
+[output]
+model_bson = "../models/mobility11/analytic/M_nosignal.bson"
+metrics_txt = "../logs/mobility11/analytic/M_nosignal_metrics.txt"
+figure_png = "../figures/mobility11/analytic/A_fit_nosignal.png"
+
+[run]
+device = "GPU:0"
+required_gpu_name = "2080ti"
+prepare_targets = false
+train = true
+evaluate = true
+verbose = true
+skip_true_m_diagnostics = true
+
+[fullcache]
+output_bson = "../models/mobility11/analytic/M_nosignal.bson"
+metrics_txt = "../logs/mobility11/analytic/M_nosignal_metrics.txt"
+epochs = 100
+eval_every = 2
+cache_pairs_per_lag = 60000
+learning_rate = 0.00003
+mean_penalty_weight = 0.0
+loss_scale_mode = "global"
+train_pair_batch_size = 30000
+save_eval_checkpoints_every = 20
+signal_weight_threshold = 0.0
+signal_weight_power = 2.0
+signal_weight_min = 0.0

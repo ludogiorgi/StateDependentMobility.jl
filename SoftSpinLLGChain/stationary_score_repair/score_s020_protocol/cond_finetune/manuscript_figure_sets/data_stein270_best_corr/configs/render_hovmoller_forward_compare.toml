@@ -1,0 +1,22 @@
+[inputs]
+observations = "../../../../../../../SoftSpinLLGChain/data/soft_spin_llg_chain.h5"
+phi = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/data/forward_phi_stein270_transfer_gpu1.h5"
+nn = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/data/forward_M_stein270_transfer_best_gpu2.h5"
+physics = "../../../../../../../SoftSpinLLGChain/data/forward_dM_phys_ansatz_clean37_directcond_floor001_dt0015.h5"
+
+[window]
+duration = 36.5
+observation_start_time = 1649.8
+phi_start_time = 0.0
+nn_start_time = 16.443
+physics_start_time = 45.6435
+trajectory_index = 1
+max_frames = 1400
+
+[figure]
+width = 4600
+height = 2850
+font_scale = 5.1
+
+[output]
+png = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/manuscript_figure_sets/data_stein270_best_corr/spin_hovmoller.png"

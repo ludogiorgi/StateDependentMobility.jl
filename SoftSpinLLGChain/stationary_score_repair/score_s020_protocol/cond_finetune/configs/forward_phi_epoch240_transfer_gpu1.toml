@@ -1,0 +1,43 @@
+# Matched constant-Phi forward baseline for the epoch-240 stationary score branch.
+
+[data]
+input_hdf5 = "../../../../../SoftSpinLLGChain/data/soft_spin_llg_chain.h5"
+score_bson = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/score_protocol_gpu2_score_vr_big.bson"
+phi_artifact_bson = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/fit_Phi_gpu2_vr_epoch240_seed0505_artifacts.bson"
+burnin_fraction = 0.1
+tau_max_decorrelation_multiples = 1.0
+lag_stride = 1
+
+[evaluation]
+max_fit_lags = 60
+pairs_per_lag_phi = 1
+pairs_per_lag_cdot = 1
+score_batch_size = 4096
+true_mobility_samples = 1
+
+[forward]
+dt = 0.00075
+total_time = 150.0
+burnin_time = 10.0
+save_dt = 0.04
+ntrajectories = 96
+score_clip = 60.0
+
+[figure]
+width = 3600
+height = 3000
+
+[output]
+artifact_bson = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/fit_Phi_gpu2_vr_epoch240_seed0505_artifacts.bson"
+metrics_txt = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/logs/forward_phi_epoch240_transfer_gpu1_metrics.txt"
+cdot_figure_png = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/figures/unused_forward_phi_epoch240_transfer_gpu1_cdot.png"
+phi_figure_png = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/figures/unused_forward_phi_epoch240_transfer_gpu1_recovery.png"
+forward_stats_png = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/figures/forward_phi_epoch240_transfer_gpu1_stats.png"
+forward_cmn_png = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/figures/forward_phi_epoch240_transfer_gpu1_cmn.png"
+forward_hdf5 = "../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/data/forward_phi_epoch240_transfer_gpu1.h5"
+
+[run]
+device = "GPU:1"
+required_gpu_name = "2080"
+seed = 2026060924
+verbose = true

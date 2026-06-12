@@ -1,0 +1,30 @@
+[inputs]
+observations = "../../../../../../../SoftSpinLLGChain/data/soft_spin_llg_chain.h5"
+score_bson = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/models/score_protocol_gpu2_score_vr_stein_meantrust_cont_from260.bson"
+nn_model = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/models/M_stein270_transfer_gpu2_best.bson"
+physics_model = "../../../../../../../SoftSpinLLGChain/models/dM_phys_ansatz_clean37_directcond_mean1e5_floor001_gpu2.bson"
+phi_target = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/models/A_stein270_noncheating_globalscale.bson"
+
+[sampling]
+seed = 20260521
+observation_postburn_fraction = 0.10
+frames = 500
+
+[grid]
+mz_min = -1.25
+mz_max = 1.25
+mperp_min = 0.0
+mperp_max = 1.25
+n_mz = 121
+n_mperp = 91
+n_radius = 220
+support_density_fraction = 0.025
+
+[figure]
+width = 7000
+height = 4200
+font_scale = 4.7
+legend_font_scale = 1.6
+
+[output]
+png = "../../../../../../../SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/manuscript_figure_sets/data_stein270_best_corr/spin_mobility.png"

@@ -12,6 +12,10 @@ Base.@kwdef struct RegenerateRunFiguresParams
     fit_height::Union{Nothing, Int} = nothing
     forward_width::Union{Nothing, Int} = nothing
     forward_height::Union{Nothing, Int} = nothing
+    forward_merge_stats_into_cphi::Bool = true
+    forward_write_stats_figure::Bool = false
+    forward_cphi_max_time::Float64 = 5.0
+    forward_cphi_panel_count::Int = 18
     use_latex::Bool = true
     show_global_titles::Bool = false
     show_metric_titles::Bool = false
@@ -59,12 +63,60 @@ function load_regenerate_params(path::AbstractString)
         fit_height=haskey(fit_cfg, "height") ? Int(fit_cfg["height"]) : nothing,
         forward_width=haskey(forward_cfg, "width") ? Int(forward_cfg["width"]) : nothing,
         forward_height=haskey(forward_cfg, "height") ? Int(forward_cfg["height"]) : nothing,
+        forward_merge_stats_into_cphi=Bool(get(forward_cfg, "merge_stats_into_cphi", true)),
+        forward_write_stats_figure=Bool(get(forward_cfg, "write_stats_figure", false)),
+        forward_cphi_max_time=Float64(get(forward_cfg, "cphi_max_time", 5.0)),
+        forward_cphi_panel_count=Int(get(forward_cfg, "cphi_panel_count", 18)),
         use_latex=Bool(get(render_cfg, "use_latex", true)),
         show_global_titles=Bool(get(render_cfg, "show_global_titles", false)),
         show_metric_titles=Bool(get(render_cfg, "show_metric_titles", false)),
         show_summary_panels=Bool(get(render_cfg, "show_summary_panels", false)),
     )
     return params, theme_cfg
+end
+
+function system_dir_from_run(params::RegenerateRunFiguresParams)
+    return dirname(dirname(params.run_dir))
+end
+
+function path_parts_after_marker(path::AbstractString, marker::AbstractString)
+    parts = splitpath(normpath(path))
+    idx = findfirst(==(marker), parts)
+    idx === nothing && return nothing
+    return idx < length(parts) ? parts[(idx + 1):end] : String[]
+end
+
+function path_parts_after_run(path::AbstractString, run_name::AbstractString)
+    parts = splitpath(normpath(path))
+    for idx in 1:(length(parts) - 1)
+        if parts[idx] == "runs" && parts[idx + 1] == run_name
+            return idx + 1 < length(parts) ? parts[(idx + 2):end] : String[]
+        end
+    end
+    return nothing
+end
+
+function resolve_saved_input_path(params::RegenerateRunFiguresParams, path::AbstractString)
+    original = normpath(String(path))
+    isfile(original) && return original
+
+    run_suffix = path_parts_after_run(original, basename(params.run_dir))
+    if run_suffix !== nothing
+        candidate = isempty(run_suffix) ? params.run_dir : joinpath(params.run_dir, run_suffix...)
+        isfile(candidate) && return candidate
+    end
+
+    system_dir = system_dir_from_run(params)
+    for marker in ("Data", "data", "models", "figures", "logs")
+        suffix = path_parts_after_marker(original, marker)
+        suffix === nothing && continue
+        candidate = joinpath(system_dir, marker, suffix...)
+        isfile(candidate) && return candidate
+    end
+
+    candidate = isabspath(original) ? joinpath(system_dir, basename(original)) : joinpath(system_dir, original)
+    isfile(candidate) && return candidate
+    return original
 end
 
 function apply_theme_overrides!(theme_cfg::Dict{String, Any})
@@ -412,16 +464,16 @@ function create_regenerated_reference_stats_figure(pdf_data, corr_data_full, cor
         x_label = use_latex ? latexstring("x") : "x"
         y_label = use_latex ? latexstring("y") : "y"
         lag_label = use_latex ? latexstring("\\tau") : "lag"
-        density_label = use_latex ? latexstring("p") : "density"
+        density_label = use_latex ? latexstring("p_{\\mathrm{ss}}") : "p_ss"
         acf_label = use_latex ? latexstring("\\mathrm{ACF}") : "ACF"
         corr_label = use_latex ? latexstring("C") : "correlation"
 
-        px_title = show_metrics ? @sprintf("Marginal p(x)    RMSE %.3e  |  KL %.3e",
-            pdf_metrics[:rmse_x], pdf_metrics[:kl_x]) : (use_latex ? latexstring("p(x)") : "Marginal p(x)")
-        py_title = show_metrics ? @sprintf("Marginal p(y)    RMSE %.3e  |  KL %.3e",
-            pdf_metrics[:rmse_y], pdf_metrics[:kl_y]) : (use_latex ? latexstring("p(y)") : "Marginal p(y)")
-        ref_pdf_label = use_latex ? latexstring("p_{" * ref_tag * "}") : reference_label
-        nn_pdf_label = use_latex ? latexstring("p_{\\mathrm{NN}}") : "learned"
+        px_title = show_metrics ? @sprintf("Marginal p_ss(x)    RMSE %.3e  |  KL %.3e",
+            pdf_metrics[:rmse_x], pdf_metrics[:kl_x]) : (use_latex ? latexstring("p_{\\mathrm{ss}}(x)") : "Marginal p_ss(x)")
+        py_title = show_metrics ? @sprintf("Marginal p_ss(y)    RMSE %.3e  |  KL %.3e",
+            pdf_metrics[:rmse_y], pdf_metrics[:kl_y]) : (use_latex ? latexstring("p_{\\mathrm{ss}}(y)") : "Marginal p_ss(y)")
+        ref_pdf_label = use_latex ? latexstring("p_{\\mathrm{ss}}^{" * ref_tag * "}") : reference_label
+        nn_pdf_label = use_latex ? latexstring("p_{\\mathrm{ss}}^{\\mathrm{NN}}") : "learned"
         ref_label = use_latex ? latexstring("\\mathrm{ref}") : reference_label
         full_label = use_latex ? latexstring("\\mathrm{full}") : "learned full"
         phi_label = use_latex ? latexstring("\\Phi") : "Φ-only"
@@ -438,10 +490,10 @@ function create_regenerated_reference_stats_figure(pdf_data, corr_data_full, cor
 
         max_xy = maximum(vcat(vec(pdf_true_xy.density), vec(pdf_pred_xy.density)))
         density_heatmap_panel!(fig[2, 1], pdf_true_xy,
-            use_latex ? latexstring("p_{" * ref_tag * "}(x,y)") : reference_title * "  p(x,y)";
+            use_latex ? latexstring("p_{\\mathrm{ss}}^{" * ref_tag * "}(x,y)") : reference_title * "  p_ss(x,y)";
             clims=(0.0, max_xy), xlabel=x_label, ylabel=y_label)
         density_heatmap_panel!(fig[2, 2], pdf_pred_xy,
-            use_latex ? latexstring("p_{\\mathrm{NN}}(x,y)") : "Learned  p(x,y)";
+            use_latex ? latexstring("p_{\\mathrm{ss}}^{\\mathrm{NN}}(x,y)") : "Learned  p_ss(x,y)";
             clims=(0.0, max_xy), xlabel=x_label, ylabel=y_label)
 
         acf_x_title = show_metrics ? @sprintf("ACF  x     full %.3e  |  Φ %.3e",
@@ -493,6 +545,199 @@ function create_regenerated_reference_stats_figure(pdf_data, corr_data_full, cor
     return nothing
 end
 
+function load_forward_trajectory_bundle(path::AbstractString)
+    times = Float64.(h5read(path, "/time"))
+    true_states = Float64.(h5read(path, "/true/states"))
+    pred_states_full = Float64.(h5read(path, "/predicted_full/states"))
+    pred_states_phi = Float64.(h5read(path, "/predicted_phi/states"))
+    return times, true_states, pred_states_full, pred_states_phi
+end
+
+function selected_cphi_indices(labels::Vector{String}, max_panels::Int)
+    max_panels >= 1 || error("forward.cphi_panel_count must be positive.")
+    return collect(1:min(max_panels, length(labels)))
+end
+
+function observable_time_matrices(states::Array{Float64, 3}, obs_indices::AbstractVector{Int})
+    ntime = size(states, 1)
+    ntraj = size(states, 3)
+    x = Float64.(vec(@view states[:, 1, :]))
+    y = Float64.(vec(@view states[:, 2, :]))
+    basis = observable_basis(x, y, obs_indices)
+    return [reshape(copy(@view basis[idx, :]), ntime, ntraj) for idx in axes(basis, 1)]
+end
+
+function compute_cphi_channels_fast(states::Array{Float64, 3}, lag_steps::Vector{Int},
+        train_pairs::Vector{Tuple{Int, Int}})
+    obs_indices, local_pairs, _ = active_observable_subset(train_pairs)
+    mats = observable_time_matrices(states, obs_indices)
+    ntime = size(states, 1)
+    ntraj = size(states, 3)
+    out = Matrix{Float64}(undef, length(lag_steps), length(train_pairs))
+    Threads.@threads for channel_idx in eachindex(train_pairs)
+        obs_idx, coord_idx = local_pairs[channel_idx]
+        obs_t = mats[obs_idx]
+        obs_0 = mats[coord_idx]
+        @inbounds for (lag_idx, lag) in enumerate(lag_steps)
+            lag < ntime || error("Requested Cphi lag exceeds saved trajectory length.")
+            upper = ntime - lag
+            out[lag_idx, channel_idx] =
+                dot(@view(obs_t[(lag + 1):ntime, :]), @view(obs_0[1:upper, :])) / (upper * ntraj)
+        end
+    end
+    return out
+end
+
+function cphi_comparison_fast(true_states::Array{Float64, 3}, pred_states::Array{Float64, 3},
+        lag_times::Vector{Float64}, lag_steps::Vector{Int},
+        train_pairs::Vector{Tuple{Int, Int}}, channel_labels::Vector{String})
+    cphi_true = compute_cphi_channels_fast(true_states, lag_steps, train_pairs)
+    cphi_pred = compute_cphi_channels_fast(pred_states, lag_steps, train_pairs)
+    channel_rmse = [rmse(cphi_true[:, idx], cphi_pred[:, idx]) for idx in 1:size(cphi_true, 2)]
+    return Dict(
+        :lag_times => lag_times,
+        :lag_steps => lag_steps,
+        :training_pairs => [(pair[1], pair[2]) for pair in train_pairs],
+        :channel_labels => copy(channel_labels),
+        :true => cphi_true,
+        :pred => cphi_pred,
+        :channel_rmse => channel_rmse,
+        :mean_rmse => mean(channel_rmse),
+    )
+end
+
+function cphi_display_data_from_trajectories(params::RegenerateRunFiguresParams,
+        forward_params::ForwardValidationParams, train_pairs::Vector{Tuple{Int, Int}},
+        labels::Vector{String}, keep::Vector{Int})
+    trajectories_hdf5 = resolve_saved_input_path(params, forward_params.trajectories_hdf5)
+    isfile(trajectories_hdf5) || error("Missing forward-validation trajectory bundle $(trajectories_hdf5).")
+
+    times, true_states, pred_states_full, pred_states_phi = load_forward_trajectory_bundle(trajectories_hdf5)
+    saved_dt = length(times) > 1 ? times[2] - times[1] : 0.0
+    saved_dt > 0.0 || error("Forward trajectory bundle needs at least two saved times.")
+
+    target_lag_points = 60
+    display_stride = max(1, cld(floor(Int, params.forward_cphi_max_time / saved_dt), target_lag_points))
+    lag_times, lag_steps = fallback_lag_steps(params.forward_cphi_max_time, saved_dt, display_stride)
+    selected_pairs = train_pairs[keep]
+    selected_labels = labels[keep]
+    cphi_data_full = cphi_comparison_fast(true_states, pred_states_full, lag_times, lag_steps,
+        selected_pairs, selected_labels)
+    cphi_data_phi = cphi_comparison_fast(true_states, pred_states_phi, lag_times, lag_steps,
+        selected_pairs, selected_labels)
+    return cphi_data_full, cphi_data_phi
+end
+
+function density_contour_levels(density_a::Density2D, density_b::Density2D)
+    max_density = maximum(vcat(vec(density_a.density), vec(density_b.density)))
+    max_density > 0.0 || return Float64[]
+    return collect(range(0.12 * max_density, 0.90 * max_density; length=6))
+end
+
+function create_bivariate_contour_panel!(parent, pdf_true_xy::Density2D, pdf_pred_xy::Density2D;
+        title, xlabel, ylabel, ref_label, full_label)
+    ax = Axis(parent; xlabel=xlabel, ylabel=ylabel, title=title,
+        xgridvisible=false, ygridvisible=false)
+    levels = density_contour_levels(pdf_true_xy, pdf_pred_xy)
+    if !isempty(levels)
+        contour!(ax, pdf_true_xy.xgrid, pdf_true_xy.ygrid, pdf_true_xy.density;
+            levels=levels, color=STYLE_REFERENCE, linewidth=curve_linewidth(), label=ref_label)
+        contour!(ax, pdf_pred_xy.xgrid, pdf_pred_xy.ygrid, pdf_pred_xy.density;
+            levels=levels, color=STYLE_PRIMARY, linestyle=:dash,
+            linewidth=curve_linewidth(), label=full_label)
+    end
+    return ax
+end
+
+function create_merged_forward_cphi_figure(pdf_data, cphi_data_full, cphi_data_phi,
+        labels::Vector{String}, output_path::AbstractString, width::Int, height::Int;
+        show_global_title::Bool=true,
+        show_metrics::Bool=true,
+        use_latex::Bool=false,
+        cphi_max_time::Float64=5.0)
+    !isempty(labels) || error("The merged forward figure needs at least one Cphi panel.")
+    ncols = 3
+    cphi_rows = cld(length(labels), ncols)
+    plot_rows = 1 + cphi_rows
+    legend_row = plot_rows + 1
+    fw, fh = publication_panel_figure_size(plot_rows, ncols;
+        base_w=width, base_h=height, panel_w=1100, panel_h=620,
+        min_w=3000, min_h=max(3200, 560 * plot_rows), max_w=4300, max_h=7600)
+
+    pdf_true_x = pdf_data[:true_x]
+    pdf_pred_x = pdf_data[:pred_x]
+    pdf_true_y = pdf_data[:true_y]
+    pdf_pred_y = pdf_data[:pred_y]
+    pdf_true_xy = pdf_data[:true_xy]
+    pdf_pred_xy = pdf_data[:pred_xy]
+    pdf_metrics = pdf_data[:metrics]
+
+    with_scaled_figure_style(fw, fh) do _
+        fig = Figure(; size=(fw, fh))
+        show_global_title && figure_title!(fig, "Forward validation")
+        x_label = use_latex ? latexstring("x") : "x"
+        y_label = use_latex ? latexstring("y") : "y"
+        lag_label = use_latex ? latexstring("\\tau") : "lag"
+        density_label = use_latex ? latexstring("p_{\\mathrm{ss}}") : "p_ss"
+        cphi_label = use_latex ? latexstring("C_{\\phi}(\\tau)") : "C_φ"
+        ref_label = use_latex ? latexstring("\\mathrm{ref}") : "ref"
+        full_label = use_latex ? latexstring("\\mathrm{full}") : "full"
+        phi_label = use_latex ? latexstring("\\Phi") : "Φ"
+
+        px_title = show_metrics ? @sprintf("p_ss(x)  RMSE %.3e", pdf_metrics[:rmse_x]) :
+            (use_latex ? latexstring("p_{\\mathrm{ss}}(x)") : "p_ss(x)")
+        py_title = show_metrics ? @sprintf("p_ss(y)  RMSE %.3e", pdf_metrics[:rmse_y]) :
+            (use_latex ? latexstring("p_{\\mathrm{ss}}(y)") : "p_ss(y)")
+        pxy_title = show_metrics ? @sprintf("p_ss(x,y) contours  RMSE %.3e", pdf_metrics[:rmse_xy]) :
+            (use_latex ? latexstring("p_{\\mathrm{ss}}(x,y)") : "p_ss(x,y)")
+
+        ax_px = Axis(fig[1, 1]; xlabel=x_label, ylabel=density_label, title=px_title)
+        legend_ref = lines!(ax_px, pdf_true_x.centers, pdf_true_x.density; color=STYLE_REFERENCE, label=ref_label)
+        legend_full = lines!(ax_px, pdf_pred_x.centers, pdf_pred_x.density;
+            color=STYLE_PRIMARY, linestyle=:dash, label=full_label)
+
+        ax_py = Axis(fig[1, 2]; xlabel=y_label, ylabel=density_label, title=py_title)
+        lines!(ax_py, pdf_true_y.centers, pdf_true_y.density; color=STYLE_REFERENCE, label=ref_label)
+        lines!(ax_py, pdf_pred_y.centers, pdf_pred_y.density;
+            color=STYLE_PRIMARY, linestyle=:dash, label=full_label)
+
+        create_bivariate_contour_panel!(fig[1, 3], pdf_true_xy, pdf_pred_xy;
+            title=pxy_title, xlabel=x_label, ylabel=y_label,
+            ref_label=ref_label, full_label=full_label)
+
+        legend_phi = nothing
+        for idx in 1:length(labels)
+            r, c = panel_rc(idx, ncols)
+            panel_title = show_metrics ? @sprintf("%s      full %.3e  |  Φ %.3e",
+                labels[idx], cphi_data_full[:channel_rmse][idx], cphi_data_phi[:channel_rmse][idx]) :
+                (use_latex ? cphi_display_label_latex(labels[idx]) : labels[idx])
+            ax = Axis(fig[r + 1, c]; xlabel=lag_label, ylabel=cphi_label, title=panel_title)
+            hlines!(ax, [0.0]; color=STYLE_ZERO, linestyle=:dot, linewidth=guide_linewidth())
+            lines!(ax, cphi_data_full[:lag_times], cphi_data_full[:true][:, idx];
+                color=STYLE_REFERENCE, label=ref_label)
+            lines!(ax, cphi_data_full[:lag_times], cphi_data_full[:pred][:, idx];
+                color=STYLE_PRIMARY, linestyle=:dash, label=full_label)
+            phi_line = lines!(ax, cphi_data_phi[:lag_times], cphi_data_phi[:pred][:, idx];
+                color=STYLE_SECONDARY, linestyle=:dot, label=phi_label)
+            xlims!(ax, 0.0, cphi_max_time)
+            legend_phi === nothing && (legend_phi = phi_line)
+        end
+
+        legend_handles = Any[legend_ref, legend_full, legend_phi]
+        legend_labels = Any[ref_label, full_label, phi_label]
+        Legend(fig[legend_row, 1:ncols], legend_handles, legend_labels;
+            orientation=:horizontal, tellheight=true, tellwidth=false,
+            framevisible=false, nbanks=1)
+
+        apply_publication_grid!(fig.layout, legend_row, ncols;
+            row_weights=vcat([0.88], fill(1.0, cphi_rows), [0.16]),
+            col_weights=[1.0, 1.0, 1.0],
+            row_gap=24, col_gap=32)
+        save_figure(output_path, fig)
+    end
+    return nothing
+end
+
 function regenerate_fit_figures(params::RegenerateRunFiguresParams)
     fit_stage_path = joinpath(params.run_dir, "fit_stage.toml")
     isfile(fit_stage_path) || error("Missing fit stage config at $(fit_stage_path).")
@@ -500,8 +745,8 @@ function regenerate_fit_figures(params::RegenerateRunFiguresParams)
     fit_params = load_params(fit_stage_path)
     width = params.fit_width === nothing ? fit_params.figure_width : params.fit_width
     height = params.fit_height === nothing ? fit_params.figure_height : params.fit_height
-    artifact_data = BSON.load(fit_params.output_artifact_bson)
-    model_data = BSON.load(fit_params.output_mobility_bson)
+    artifact_data = BSON.load(resolve_saved_input_path(params, fit_params.output_artifact_bson))
+    model_data = BSON.load(resolve_saved_input_path(params, fit_params.output_mobility_bson))
 
     labels = String.(artifact_data[:observable_labels])
     a_data = Float64.(artifact_data[:a_data])
@@ -516,8 +761,9 @@ function regenerate_fit_figures(params::RegenerateRunFiguresParams)
 
     _, a_rmse_data_nn, a_rmse_true_nn = compute_rmse_tables(a_data, a_true, a_nn)
     cdot_rmse_data_true, _, cdot_rmse_true_nn = compute_rmse_tables(cdot_data, cdot_true, cdot_nn)
-    rmse_phys, rmse_norm, target_scale = parse_training_channel_metrics(fit_params.output_metrics_txt, channel_labels)
-    summary_lines = params.show_summary_panels ? fit_summary_lines(fit_params.output_metrics_txt, fit_params, artifact_data, model_data) : String[]
+    metrics_txt = resolve_saved_input_path(params, fit_params.output_metrics_txt)
+    rmse_phys, rmse_norm, target_scale = parse_training_channel_metrics(metrics_txt, channel_labels)
+    summary_lines = params.show_summary_panels ? fit_summary_lines(metrics_txt, fit_params, artifact_data, model_data) : String[]
 
     out_a = output_path_in_dir(params.output_dir, fit_params.output_a_png, params.overwrite)
     out_cdot = output_path_in_dir(params.output_dir, fit_params.output_cphi_png, params.overwrite)
@@ -541,14 +787,16 @@ function regenerate_fit_figures(params::RegenerateRunFiguresParams)
         use_latex=params.use_latex)
 
     device = detect_device()
-    plain_data = BSON.load(fit_params.plain_score_bson)
+    plain_data = BSON.load(resolve_saved_input_path(params, fit_params.plain_score_bson))
     plain_model = to_device(plain_data[:host_model], device)
-    sampler = build_pair_sampler(fit_params.input_hdf5, fit_params.burnin_fraction, fit_params.tau_min, fit_params.lag_stride)
-    meta = load_affine_model_metadata(fit_params.input_hdf5)
+    input_hdf5 = resolve_saved_input_path(params, fit_params.input_hdf5)
+    sampler = build_pair_sampler(input_hdf5, fit_params.burnin_fraction, fit_params.tau_min, fit_params.lag_stride)
+    meta = load_affine_model_metadata(input_hdf5)
     field = estimate_r_field(plain_model, sampler.states, sampler.start_idx, meta,
         fit_params.mobility_grid_nx, fit_params.mobility_grid_ny, fit_params.mobility_ridge, fit_params.grid_pad_fraction,
         fit_params.score_batch_size, device)
-    mobility_runtime, _ = load_mobility_runtime(fit_params.output_mobility_bson, fit_params.score_batch_size, device, fit_params.mobility_nn_psd_jitter)
+    mobility_runtime, _ = load_mobility_runtime(resolve_saved_input_path(params, fit_params.output_mobility_bson),
+        fit_params.score_batch_size, device, fit_params.mobility_nn_psd_jitter)
     ref_mats = mobility_reference_matrices(field)
     nn_mats = mobility_predicted_matrices(mobility_runtime.host_model, field, mobility_runtime.μ, mobility_runtime.σ,
         fit_params.mobility_nn_psd_jitter, fit_params.score_batch_size, device)
@@ -571,8 +819,8 @@ function regenerate_forward_validation_figures(params::RegenerateRunFiguresParam
     forward_params = load_forward_validation_params(forward_stage_path)
     width = params.forward_width === nothing ? forward_params.figure_width : params.forward_width
     height = params.forward_height === nothing ? forward_params.figure_height : params.forward_height
-    diagnostics = BSON.load(forward_params.diagnostics_bson)
-    mobility_artifact = BSON.load(forward_params.mobility_artifact_bson)
+    diagnostics = BSON.load(resolve_saved_input_path(params, forward_params.diagnostics_bson))
+    mobility_artifact = BSON.load(resolve_saved_input_path(params, forward_params.mobility_artifact_bson))
 
     pdf_data_full, corr_data_full, corr_data_phi,
     observed_pdf_data_full, observed_corr_data_full, observed_corr_data_phi,
@@ -580,20 +828,23 @@ function regenerate_forward_validation_figures(params::RegenerateRunFiguresParam
     aux_data_full, aux_data_phi = rebuild_forward_plot_inputs(diagnostics)
 
     device = detect_device()
-    mobility_runtime, _ = load_mobility_runtime(forward_params.mobility_model_bson, forward_params.eval_batch_size, device, forward_params.mobility_psd_jitter)
+    mobility_runtime, _ = load_mobility_runtime(resolve_saved_input_path(params, forward_params.mobility_model_bson),
+        forward_params.eval_batch_size, device, forward_params.mobility_psd_jitter)
     cphi_pairs = cphi_training_pairs(mobility_runtime, mobility_artifact)
     cphi_labels = cphi_display_labels(cphi_pairs)
 
     outputs = String[]
-    out_stats = output_path_in_dir(params.output_dir, forward_params.figure_stats_png, params.overwrite)
-    create_regenerated_reference_stats_figure(pdf_data_full, corr_data_full, corr_data_phi, aux_data_full, aux_data_phi,
-        out_stats, width, height;
-        reference_label="true rollout", reference_title="True Rollout",
-        show_global_title=params.show_global_titles,
-        show_metrics=params.show_metric_titles,
-        show_summary=params.show_summary_panels,
-        use_latex=params.use_latex)
-    push!(outputs, out_stats)
+    if params.forward_write_stats_figure
+        out_stats = output_path_in_dir(params.output_dir, forward_params.figure_stats_png, params.overwrite)
+        create_regenerated_reference_stats_figure(pdf_data_full, corr_data_full, corr_data_phi, aux_data_full, aux_data_phi,
+            out_stats, width, height;
+            reference_label="true rollout", reference_title="True Rollout",
+            show_global_title=params.show_global_titles,
+            show_metrics=params.show_metric_titles,
+            show_summary=params.show_summary_panels,
+            use_latex=params.use_latex)
+        push!(outputs, out_stats)
+    end
 
     if forward_params.figure_observed_png !== nothing
         out_observed = output_path_in_dir(params.output_dir, forward_params.figure_observed_png, params.overwrite)
@@ -613,10 +864,26 @@ function regenerate_forward_validation_figures(params::RegenerateRunFiguresParam
     end
 
     out_cphi = output_path_in_dir(params.output_dir, forward_params.figure_cphi_png, params.overwrite)
-    create_cphi_figure(cphi_data_full, cphi_data_phi, cphi_labels, out_cphi, width, height;
-        show_global_title=params.show_global_titles,
-        show_metrics=params.show_metric_titles,
-        use_latex=params.use_latex)
+    if params.forward_merge_stats_into_cphi
+        keep = selected_cphi_indices(cphi_labels, params.forward_cphi_panel_count)
+        if length(keep) < length(cphi_labels)
+            @printf("Merged forward figure uses the first %d of %d Cphi panels.\n",
+                length(keep), length(cphi_labels))
+        end
+        cphi_display_full, cphi_display_phi = cphi_display_data_from_trajectories(
+            params, forward_params, cphi_pairs, cphi_labels, keep)
+        create_merged_forward_cphi_figure(pdf_data_full, cphi_display_full, cphi_display_phi,
+            cphi_labels[keep], out_cphi, width, height;
+            show_global_title=params.show_global_titles,
+            show_metrics=params.show_metric_titles,
+            use_latex=params.use_latex,
+            cphi_max_time=params.forward_cphi_max_time)
+    else
+        create_cphi_figure(cphi_data_full, cphi_data_phi, cphi_labels, out_cphi, width, height;
+            show_global_title=params.show_global_titles,
+            show_metrics=params.show_metric_titles,
+            use_latex=params.use_latex)
+    end
     push!(outputs, out_cphi)
 
     return outputs

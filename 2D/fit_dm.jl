@@ -484,7 +484,8 @@ function detect_device()
 end
 
 to_device(x, device::DeviceConfig) = device.use_gpu ? cu(x) : x
-to_host(x) = x isa CUDA.AbstractGPUArray ? Array(x) : x
+to_host(x::AbstractArray) = Array(x)
+to_host(x) = x
 
 function burnin_start_index(nsaved::Int, burnin_fraction::Float64)
     return clamp(1 + floor(Int, burnin_fraction * (nsaved - 1)), 1, nsaved)

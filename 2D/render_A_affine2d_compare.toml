@@ -1,0 +1,39 @@
+# Paper-facing A_mn comparison for the two-dimensional affine benchmark.
+# The renderer reads the accepted run_047 mobility artifact and caches the
+# plotted arrays, so rerendering does not rerun simulations or training.
+#
+# Run from the repository root:
+#   xvfb-run -a julia --project=. --startup-file=no 2D/render_A_affine2d_compare.jl 2D/render_A_affine2d_compare.toml
+
+[inputs]
+artifact_bson = "runs/run_047/data/mobility_artifacts.bson"
+
+[selection]
+use_cache = true
+
+[figure]
+width = 5600
+height = 6400
+ncols = 3
+
+[theme]
+px_per_unit = 1.65
+fontsize = 28
+axis_ticklabelsize = 25
+axis_labelsize = 31
+axis_titlesize = 33
+legend_labelsize = 24
+legend_titlesize = 25
+colorbar_labelsize = 28
+colorbar_ticklabelsize = 22
+label_fontsize = 31
+text_fontsize = 24
+summary_fontsize = 24
+summary_title_fontsize = 27
+figure_title_fontsize = 38
+figure_subtitle_fontsize = 27
+
+[output]
+png = "figures/affine2d_A.png"
+cache_h5 = "runs/run_047/data/affine2d_A.h5"
+metrics_txt = "runs/run_047/data/affine2d_A_metrics.txt"
