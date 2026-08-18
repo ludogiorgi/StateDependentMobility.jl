@@ -61,3 +61,25 @@ SoftSpinLLGChain/stationary_score_repair/score_s020_protocol/cond_finetune/manus
 
 The primary paper branch is `data_epoch240_best_corr`. The comparison branches
 are `data_stein270_best_corr` and `phys_score_11obs_cond`.
+
+These three branches represent distinct comparisons reported in the paper. The
+repository intentionally excludes abandoned finetunes, rejected continuations,
+obsolete target-estimation configurations, raw experiment products, and
+alternate file versions.
+
+## Validation
+
+Run the lightweight public-source checks with Julia 1.11:
+
+```bash
+julia test/runtests.jl
+```
+
+The checks parse every tracked Julia and TOML source file and enforce the public
+repository boundary. Full training and forward experiments require the compute
+resources and datasets described by their selected configurations.
+
+## Citation and license
+
+Citation metadata are provided in `CITATION.cff`. The source code is available
+under the BSD 3-Clause License; see `LICENSE`.
