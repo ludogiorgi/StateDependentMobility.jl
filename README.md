@@ -14,22 +14,18 @@ tracked.
 
 - `2D/`: two-dimensional reference benchmark.
 - `SoftSpinLLGChain/`: soft-spin chain benchmark and manuscript-result configs.
-- `ScoreUNet1D.jl/`: pinned submodule providing the periodic 1D U-Net backbone.
+- `ScoreUNet1D.jl/`: vendored paper-support snapshot of the periodic 1D U-Net
+  backbone. It was imported from the `sdm-paper-2026-06` release and is now
+  versioned with this repository so the published code remains self-contained.
 
 ## Setup
 
-Clone with the submodule:
+Clone the repository:
 
 ```bash
-git clone --recurse-submodules https://github.com/ludogiorgi/StateDependentMobility.jl.git
+git clone https://github.com/ludogiorgi/StateDependentMobility.jl.git
 cd StateDependentMobility.jl
 julia --project=. -e 'using Pkg; Pkg.instantiate()'
-```
-
-If the repository was already cloned:
-
-```bash
-git submodule update --init --recursive
 ```
 
 ## Workflows
